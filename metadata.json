@@ -1,0 +1,6 @@
+{
+  "name": "Kasir Sembako",
+  "description": "Aplikasi kasir offline sederhana dan rapi untuk toko sembako dengan scan barcode, hitung kembalian cepat, dan ringkasan omzet harian.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

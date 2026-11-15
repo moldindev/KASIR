@@ -1,0 +1,19 @@
+<resources>
+    <string name="app_name">Kasir Sembako</string>
+    <string name="nav_kasir">Kasir</string>
+    <string name="nav_riwayat">Riwayat</string>
+    <string name="search_placeholder">Cari nama atau barcode…</string>
+    <string name="action_scan_barcode">Scan Barcode</string>
+    <string name="action_add_product">+ Barang</string>
+    <string name="action_pay">Bayar</string>
+    <string name="action_complete_sale">Selesaikan Transaksi</string>
+    <string name="action_new_sale">Transaksi Baru</string>
+    <string name="action_load_starter">Isi Contoh Barang Sembako</string>
+    <string name="empty_products_title">Belum ada barang di katalog</string>
+    <string name="empty_products_desc">Tambahkan barang sembako Anda sendiri atau isi contoh barang sembako untuk langsung mencoba kasir.</string>
+    <string name="empty_history_title">Belum ada transaksi</string>
+    <string name="empty_history_desc">Transaksi yang selesai dibayar akan otomatis tercatat di sini untuk ringkasan omzet harian.</string>
+    <string name="camera_permission_title">Izin Kamera Diperlukan</string>
+    <string name="camera_permission_desc">Izinkan akses kamera agar kasir dapat memindai barcode kemasan sembako secara langsung.</string>
+    <string name="camera_permission_button">Izinkan Kamera</string>
+</resources>
