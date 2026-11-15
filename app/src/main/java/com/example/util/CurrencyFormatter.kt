@@ -5,13 +5,52 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.round
 
 private val indonesiaLocale = Locale.Builder().setLanguage("id").setRegion("ID").build()
 
 fun formatRupiah(amount: Long): String {
   val formatter = NumberFormat.getNumberInstance(indonesiaLocale)
-  val absText = formatter.format(kotlin.math.abs(amount))
+  val absText = formatter.format(abs(amount))
   return if (amount < 0) "-Rp $absText" else "Rp $absText"
+}
+
+fun formatQuarterQuantity(quarterUnits: Int): String {
+  if (quarterUnits <= 0) return "0"
+  val whole = quarterUnits / 4
+  val rem = quarterUnits % 4
+  val frac =
+    when (rem) {
+      1 -> "1/4"
+      2 -> "1/2"
+      3 -> "3/4"
+      else -> ""
+    }
+  return when {
+    whole == 0 -> frac
+    frac.isEmpty() -> "$whole"
+    else -> "$whole $frac"
+  }
+}
+
+fun formatDecimalQuantity(quantity: Double): String {
+  val roundedQuarters = round(quantity * 4.0).toInt()
+  if (abs(quantity - roundedQuarters / 4.0) < 0.001) {
+    return formatQuarterQuantity(roundedQuarters)
+  }
+  val formatted = String.format(indonesiaLocale, "%.2f", quantity).trimEnd('0').trimEnd(',', '.')
+  return formatted.ifEmpty { "0" }
+}
+
+fun calculateFractionalSubtotal(unitPrice: Long, quarterUnits: Int): Long {
+  if (quarterUnits <= 0 || unitPrice <= 0L) return 0L
+  return (unitPrice * quarterUnits + 2L) / 4L
+}
+
+fun calculateDecimalSubtotal(unitPrice: Long, quantity: Double): Long {
+  if (quantity <= 0.0 || unitPrice <= 0L) return 0L
+  return round(unitPrice * quantity).toLong()
 }
 
 fun formatTimeOnly(timestamp: Long): String {

@@ -36,7 +36,7 @@ data class TransactionItemEntity(
   val productName: String,
   val unit: String,
   val unitPrice: Long,
-  val quantity: Int,
+  val quantity: Double,
 )
 
 data class TransactionWithItems(

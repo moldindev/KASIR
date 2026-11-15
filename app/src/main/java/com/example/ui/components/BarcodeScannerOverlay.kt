@@ -954,7 +954,7 @@ private fun ScannerSplitCartItemCard(
             color = MaterialTheme.colorScheme.secondary,
           ) {
             Text(
-              text = "×${item.quantity}",
+              text = "×${item.formattedQuantity}",
               style = MaterialTheme.typography.labelMedium,
               fontWeight = FontWeight.Bold,
               color = MaterialTheme.colorScheme.onSecondary,

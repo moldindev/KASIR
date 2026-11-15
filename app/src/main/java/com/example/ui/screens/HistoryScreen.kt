@@ -47,6 +47,7 @@ import com.example.ui.theme.SagePrimary
 import com.example.ui.theme.SagePrimaryDark
 import com.example.ui.viewmodel.HistoryUiState
 import com.example.util.DateFilter
+import com.example.util.formatDecimalQuantity
 import com.example.util.formatFullDateTime
 import com.example.util.formatRupiah
 import com.example.util.formatTimeOnly
@@ -222,7 +223,7 @@ private fun TransactionHistoryCard(
 ) {
   val tx = txWithItems.transaction
   val itemSummary =
-    txWithItems.items.joinToString(", ") { "${it.quantity}× ${it.productName}" }.ifEmpty {
+    txWithItems.items.joinToString(", ") { "${formatDecimalQuantity(it.quantity)}× ${it.productName}" }.ifEmpty {
       "${tx.totalItems} barang"
     }
 

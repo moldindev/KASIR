@@ -39,6 +39,7 @@ import com.example.ui.theme.PriceTextLarge
 import com.example.ui.theme.PriceTextMedium
 import com.example.ui.theme.PriceTextSmall
 import com.example.ui.viewmodel.ReceiptData
+import com.example.util.formatDecimalQuantity
 import com.example.util.formatFullDateTime
 import com.example.util.formatRupiah
 
@@ -116,7 +117,7 @@ fun ReceiptDialog(
                   overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                  text = "${item.quantity} ${item.unit} × ${formatRupiah(item.unitPrice)}",
+                  text = "${formatDecimalQuantity(item.quantity)} ${item.unit} × ${formatRupiah(item.unitPrice)}",
                   style = PriceTextSmall,
                   color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

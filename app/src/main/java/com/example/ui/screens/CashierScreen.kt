@@ -1,10 +1,24 @@
 package com.example.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -17,14 +31,14 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -32,6 +46,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.QrCode2
@@ -43,10 +58,7 @@ import androidx.compose.material.icons.outlined.ShoppingBasket
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -56,15 +68,25 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -85,12 +107,16 @@ import com.example.ui.theme.PriceTextMedium
 import com.example.ui.theme.PriceTextSmall
 import com.example.ui.viewmodel.CartLineItem
 import com.example.ui.viewmodel.CashierUiState
+import com.example.ui.viewmodel.QuantityStep
+import com.example.util.formatQuarterQuantity
 import com.example.util.formatRupiah
+import kotlinx.coroutines.delay
 
 @Composable
 fun CashierScreen(
   uiState: CashierUiState,
   onSearchQueryChange: (String) -> Unit,
+  onSelectQuantityStep: (QuantityStep) -> Unit,
   onAddToCart: (ProductEntity) -> Unit,
   onDecrementCartItem: (Long) -> Unit,
   onIncrementCartItem: (CartLineItem) -> Unit,
@@ -131,7 +157,12 @@ fun CashierScreen(
             searchQuery = uiState.searchQuery,
             onSearchQueryChange = onSearchQueryChange,
           )
-          Spacer(modifier = Modifier.height(10.dp))
+          Spacer(modifier = Modifier.height(8.dp))
+          QuantityStepSelectorRow(
+            selectedStep = uiState.quantityStep,
+            onSelectStep = onSelectQuantityStep,
+          )
+          Spacer(modifier = Modifier.height(6.dp))
           ProductCatalogPane(
             uiState = uiState,
             onSearchQueryChange = onSearchQueryChange,
@@ -139,7 +170,6 @@ fun CashierScreen(
             onOpenAddProduct = onOpenAddProduct,
             onOpenEditProduct = onOpenEditProduct,
             onLoadStarterProducts = onLoadStarterProducts,
-            compactCard = false,
             modifier = Modifier.weight(1f).fillMaxWidth(),
           )
         }
@@ -153,12 +183,14 @@ fun CashierScreen(
           CheckoutPaymentContent(
             cartItems = uiState.cartItems,
             totalAmount = uiState.totalAmount,
+            quantityStep = uiState.quantityStep,
             billCounts = uiState.billCounts,
             isExactCash = uiState.isExactCash,
             cashPaid = uiState.cashPaid,
             changeAmount = uiState.changeAmount,
             canCompleteSale = uiState.canCompleteSale,
             isSaving = uiState.isSavingSale,
+            onSelectQuantityStep = onSelectQuantityStep,
             onIncrementItem = onIncrementCartItem,
             onDecrementItem = onDecrementCartItem,
             onClearCart = onClearCart,
@@ -167,6 +199,8 @@ fun CashierScreen(
             onSelectExactCash = onSelectExactCash,
             onResetCash = onResetCash,
             onCompleteSale = onCompleteSale,
+            lastAddedProductId = uiState.lastAddedProductId,
+            lastAddedEventId = uiState.lastAddedEventId,
             modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
           )
         }
@@ -191,7 +225,7 @@ fun CashierScreen(
           onSearchQueryChange = onSearchQueryChange,
         )
 
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
         if (uiState.allProducts.isEmpty()) {
           EmptyCatalogState(
@@ -200,7 +234,7 @@ fun CashierScreen(
             modifier = Modifier.weight(1f).fillMaxWidth(),
           )
         } else {
-          // Side-by-side layout: Left = Pilihan Barang, Right = Keranjang
+          // Side-by-side layout: Left = Pilihan Barang (Compact rows + long-press edit), Right = Keranjang (unchanged card size)
           Row(
             modifier = Modifier.weight(1f).fillMaxWidth().padding(bottom = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -221,11 +255,16 @@ fun CashierScreen(
                   color = MaterialTheme.colorScheme.onBackground,
                 )
                 Text(
-                  text = "${uiState.filteredProducts.size}",
-                  style = MaterialTheme.typography.labelMedium,
+                  text = "Tahan = edit",
+                  style = MaterialTheme.typography.labelSmall,
                   color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
               }
+
+              QuantityStepSelectorRow(
+                selectedStep = uiState.quantityStep,
+                onSelectStep = onSelectQuantityStep,
+              )
 
               ProductCatalogPane(
                 uiState = uiState,
@@ -234,7 +273,6 @@ fun CashierScreen(
                 onOpenAddProduct = onOpenAddProduct,
                 onOpenEditProduct = onOpenEditProduct,
                 onLoadStarterProducts = onLoadStarterProducts,
-                compactCard = true,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
               )
             }
@@ -243,6 +281,8 @@ fun CashierScreen(
               cartItems = uiState.cartItems,
               totalItems = uiState.totalItems,
               totalAmount = uiState.totalAmount,
+              lastAddedProductId = uiState.lastAddedProductId,
+              lastAddedEventId = uiState.lastAddedEventId,
               onIncrementItem = onIncrementCartItem,
               onDecrementItem = onDecrementCartItem,
               onClearCart = onClearCart,
@@ -261,6 +301,53 @@ fun CashierScreen(
       onDismiss = onDismissShopNameDialog,
       onSave = onSaveShopName,
     )
+  }
+}
+
+@Composable
+private fun QuantityStepSelectorRow(
+  selectedStep: QuantityStep,
+  onSelectStep: (QuantityStep) -> Unit,
+) {
+  Row(
+    modifier = Modifier.fillMaxWidth(),
+    horizontalArrangement = Arrangement.spacedBy(5.dp),
+    verticalAlignment = Alignment.CenterVertically,
+  ) {
+    Text(
+      text = "Beli:",
+      style = MaterialTheme.typography.labelSmall,
+      color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    QuantityStep.entries.forEach { step ->
+      val selected = selectedStep == step
+      Surface(
+        onClick = { onSelectStep(step) },
+        shape = RoundedCornerShape(10.dp),
+        color =
+          if (selected) MaterialTheme.colorScheme.secondary
+          else MaterialTheme.colorScheme.surface,
+        border =
+          BorderStroke(
+            width = 1.dp,
+            color =
+              if (selected) MaterialTheme.colorScheme.secondary
+              else MaterialTheme.colorScheme.outline,
+          ),
+        modifier = Modifier.weight(1f).height(34.dp).testTag("step_chip_${step.name}"),
+      ) {
+        Box(contentAlignment = Alignment.Center) {
+          Text(
+            text = step.label,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold,
+            color =
+              if (selected) MaterialTheme.colorScheme.onSecondary
+              else MaterialTheme.colorScheme.onSurface,
+          )
+        }
+      }
+    }
   }
 }
 
@@ -418,7 +505,6 @@ private fun ProductCatalogPane(
   onOpenAddProduct: () -> Unit,
   onOpenEditProduct: (ProductEntity) -> Unit,
   onLoadStarterProducts: () -> Unit,
-  compactCard: Boolean,
   modifier: Modifier = Modifier,
 ) {
   when {
@@ -438,22 +524,125 @@ private fun ProductCatalogPane(
       )
     }
     else -> {
-      LazyVerticalGrid(
-        columns = GridCells.Adaptive(minSize = 148.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+      LazyColumn(
+        verticalArrangement = Arrangement.spacedBy(6.dp),
         contentPadding = PaddingValues(bottom = 12.dp),
         modifier = modifier,
       ) {
         items(uiState.filteredProducts, key = { it.id }) { product ->
-          val qtyInCart = uiState.cartQuantities[product.id] ?: 0
-          ProductGridCard(
+          val quarterQtyInCart = uiState.cartQuantities[product.id] ?: 0
+          CompactProductRowCard(
             product = product,
-            qtyInCart = qtyInCart,
-            compactCard = compactCard,
+            quarterQtyInCart = quarterQtyInCart,
             onTap = { onAddToCart(product) },
-            onEditClick = { onOpenEditProduct(product) },
+            onLongPressEdit = { onOpenEditProduct(product) },
           )
+        }
+      }
+    }
+  }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun CompactProductRowCard(
+  product: ProductEntity,
+  quarterQtyInCart: Int,
+  onTap: () -> Unit,
+  onLongPressEdit: () -> Unit,
+) {
+  val haptic = LocalHapticFeedback.current
+  val inCart = quarterQtyInCart > 0
+  val cardShape = RoundedCornerShape(12.dp)
+
+  Surface(
+    shape = cardShape,
+    color =
+      if (inCart) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
+      else MaterialTheme.colorScheme.surface,
+    border =
+      BorderStroke(
+        width = if (inCart) 1.5.dp else 1.dp,
+        color =
+          if (inCart) MaterialTheme.colorScheme.primary
+          else MaterialTheme.colorScheme.outline,
+      ),
+    modifier =
+      Modifier.fillMaxWidth()
+        .heightIn(min = 52.dp)
+        .clip(cardShape)
+        .combinedClickable(
+          onClick = onTap,
+          onClickLabel = "Tambah ${product.name}",
+          onLongClick = {
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            onLongPressEdit()
+          },
+          onLongClickLabel = "Ubah ${product.name}",
+        )
+        .testTag("product_card_${product.id}"),
+  ) {
+    Row(
+      modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
+      horizontalArrangement = Arrangement.SpaceBetween,
+      verticalAlignment = Alignment.CenterVertically,
+    ) {
+      Column(
+        modifier = Modifier.weight(1f).padding(end = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+      ) {
+        Text(
+          text = product.name,
+          style = MaterialTheme.typography.titleSmall,
+          fontWeight = FontWeight.SemiBold,
+          color = MaterialTheme.colorScheme.onSurface,
+          maxLines = 2,
+          overflow = TextOverflow.Ellipsis,
+        )
+        Row(
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+          Text(
+            text = "per ${product.unit}",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+          if (!product.barcode.isNullOrBlank()) {
+            Icon(
+              imageVector = Icons.Filled.QrCode2,
+              contentDescription = "Memiliki barcode",
+              tint = MaterialTheme.colorScheme.onSurfaceVariant,
+              modifier = Modifier.size(13.dp),
+            )
+          }
+        }
+      }
+
+      Column(
+        horizontalAlignment = Alignment.End,
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+      ) {
+        Text(
+          text = formatRupiah(product.price),
+          style = PriceTextSmall,
+          fontWeight = FontWeight.Bold,
+          color = MaterialTheme.colorScheme.primary,
+          maxLines = 1,
+        )
+        if (inCart) {
+          Surface(
+            shape = RoundedCornerShape(7.dp),
+            color = MaterialTheme.colorScheme.secondary,
+          ) {
+            Text(
+              text = "×${formatQuarterQuantity(quarterQtyInCart)}",
+              style = MaterialTheme.typography.labelSmall,
+              fontWeight = FontWeight.Bold,
+              color = MaterialTheme.colorScheme.onSecondary,
+              modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
+            )
+          }
         }
       }
     }
@@ -465,6 +654,8 @@ private fun SideCartPane(
   cartItems: List<CartLineItem>,
   totalItems: Int,
   totalAmount: Long,
+  lastAddedProductId: Long?,
+  lastAddedEventId: Long,
   onIncrementItem: (CartLineItem) -> Unit,
   onDecrementItem: (Long) -> Unit,
   onClearCart: () -> Unit,
@@ -472,6 +663,90 @@ private fun SideCartPane(
   modifier: Modifier = Modifier,
 ) {
   val haptic = LocalHapticFeedback.current
+  val listState = rememberLazyListState()
+  val knownProductIds = remember { cartItems.map { it.product.id }.toMutableSet() }
+  var highlightedProductId by remember { mutableStateOf<Long?>(null) }
+  var addedFeedbackLabel by remember { mutableStateOf<String?>(null) }
+  var totalPulseActive by remember { mutableStateOf(false) }
+
+  LaunchedEffect(cartItems) {
+    val activeIds = cartItems.map { it.product.id }.toSet()
+    knownProductIds.retainAll(activeIds)
+  }
+
+  LaunchedEffect(lastAddedEventId) {
+    if (lastAddedEventId > 0L && lastAddedProductId != null) {
+      val targetIndex = cartItems.indexOfFirst { it.product.id == lastAddedProductId }
+      val targetItem = if (targetIndex >= 0) cartItems[targetIndex] else null
+      highlightedProductId = lastAddedProductId
+      totalPulseActive = true
+      addedFeedbackLabel =
+        if (targetItem != null) {
+          "+ ${targetItem.product.name} (×${targetItem.formattedQuantity})"
+        } else {
+          null
+        }
+
+      if (targetIndex >= 0) {
+        val layoutInfo = listState.layoutInfo
+        val visibleItem = layoutInfo.visibleItemsInfo.firstOrNull { it.index == targetIndex }
+        val isFullyVisible =
+          visibleItem != null &&
+            visibleItem.offset >= layoutInfo.viewportStartOffset &&
+            visibleItem.offset + visibleItem.size <= layoutInfo.viewportEndOffset
+        if (!isFullyVisible) {
+          listState.animateScrollToItem(targetIndex)
+        }
+      }
+
+      delay(900)
+      highlightedProductId = null
+      totalPulseActive = false
+      addedFeedbackLabel = null
+    }
+  }
+
+  LaunchedEffect(cartItems.isEmpty()) {
+    if (cartItems.isEmpty()) {
+      highlightedProductId = null
+      totalPulseActive = false
+      addedFeedbackLabel = null
+    }
+  }
+
+  val badgeScale by
+    animateFloatAsState(
+      targetValue = if (totalPulseActive) 1.16f else 1f,
+      animationSpec =
+        spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+      label = "cartBadgeScale",
+    )
+
+  val totalScale by
+    animateFloatAsState(
+      targetValue = if (totalPulseActive) 1.04f else 1f,
+      animationSpec =
+        spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+      label = "cartTotalScale",
+    )
+
+  val totalCardColor by
+    animateColorAsState(
+      targetValue =
+        if (totalPulseActive) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+      animationSpec = tween(durationMillis = 280),
+      label = "totalCardColor",
+    )
+
+  val totalCardBorderColor by
+    animateColorAsState(
+      targetValue =
+        if (totalPulseActive) MaterialTheme.colorScheme.primary
+        else MaterialTheme.colorScheme.outline,
+      animationSpec = tween(durationMillis = 280),
+      label = "totalCardBorderColor",
+    )
 
   Surface(
     modifier = modifier,
@@ -481,9 +756,8 @@ private fun SideCartPane(
   ) {
     Column(
       modifier = Modifier.fillMaxSize().padding(10.dp),
-      verticalArrangement = Arrangement.spacedBy(8.dp),
+      verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-      // Header row
       Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -506,6 +780,11 @@ private fun SideCartPane(
             Surface(
               shape = RoundedCornerShape(8.dp),
               color = MaterialTheme.colorScheme.secondary,
+              modifier =
+                Modifier.graphicsLayer {
+                  scaleX = badgeScale
+                  scaleY = badgeScale
+                },
             ) {
               Text(
                 text = "$totalItems",
@@ -528,6 +807,40 @@ private fun SideCartPane(
               contentDescription = "Kosongkan keranjang",
               tint = MaterialTheme.colorScheme.error,
               modifier = Modifier.size(20.dp),
+            )
+          }
+        }
+      }
+
+      AnimatedVisibility(
+        visible = addedFeedbackLabel != null,
+        enter = fadeIn(tween(180)) + expandVertically(tween(180)),
+        exit = fadeOut(tween(240)) + shrinkVertically(tween(240)),
+      ) {
+        Surface(
+          shape = RoundedCornerShape(10.dp),
+          color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f),
+          border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)),
+          modifier = Modifier.fillMaxWidth().testTag("cart_added_feedback"),
+        ) {
+          Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+          ) {
+            Icon(
+              imageVector = Icons.Filled.CheckCircle,
+              contentDescription = null,
+              tint = MaterialTheme.colorScheme.primary,
+              modifier = Modifier.size(14.dp),
+            )
+            Text(
+              text = addedFeedbackLabel.orEmpty(),
+              style = MaterialTheme.typography.labelSmall,
+              fontWeight = FontWeight.SemiBold,
+              color = MaterialTheme.colorScheme.onPrimaryContainer,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
             )
           }
         }
@@ -579,81 +892,329 @@ private fun SideCartPane(
           modifier = Modifier.fillMaxWidth(),
         )
 
-        LazyColumn(
-          modifier = Modifier.weight(1f).fillMaxWidth(),
-          verticalArrangement = Arrangement.spacedBy(8.dp),
-          contentPadding = PaddingValues(bottom = 4.dp),
-        ) {
-          items(cartItems, key = { it.product.id }) { item ->
-            CompactSplitCartCard(
-              item = item,
-              onDecrement = {
-                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                onDecrementItem(item.product.id)
-              },
-              onIncrement = {
-                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                onIncrementItem(item)
-              },
+        val surfaceColor = MaterialTheme.colorScheme.surface
+        val canScrollTop by remember { derivedStateOf { listState.canScrollBackward } }
+        val canScrollBottom by remember { derivedStateOf { listState.canScrollForward } }
+
+        Box(modifier = Modifier.weight(1f).fillMaxWidth().clipToBounds()) {
+          LazyColumn(
+            state = listState,
+            modifier =
+              Modifier.fillMaxSize()
+                .smoothLazyVerticalScrollbar(
+                  state = listState,
+                  thumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                  activeThumbColor = MaterialTheme.colorScheme.primary,
+                  trackColor = MaterialTheme.colorScheme.outline,
+                )
+                .testTag("side_cart_list"),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            contentPadding = PaddingValues(end = 9.dp, bottom = 4.dp),
+          ) {
+            items(cartItems, key = { it.product.id }) { item ->
+              val isNewEntry = remember(item.product.id) { knownProductIds.add(item.product.id) }
+              CompactSplitCartCard(
+                item = item,
+                isNewEntry = isNewEntry,
+                isHighlighted = highlightedProductId == item.product.id,
+                onDecrement = {
+                  haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                  onDecrementItem(item.product.id)
+                },
+                onIncrement = {
+                  haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                  onIncrementItem(item)
+                },
+                modifier =
+                  Modifier.animateItem(
+                    fadeInSpec = null,
+                    placementSpec =
+                      spring(
+                        stiffness = Spring.StiffnessMediumLow,
+                        dampingRatio = Spring.DampingRatioNoBouncy,
+                      ),
+                    fadeOutSpec = tween(durationMillis = 180),
+                  ),
+              )
+            }
+          }
+
+          if (canScrollTop) {
+            Box(
+              modifier =
+                Modifier.align(Alignment.TopCenter)
+                  .fillMaxWidth()
+                  .height(10.dp)
+                  .background(
+                    Brush.verticalGradient(
+                      colors = listOf(surfaceColor.copy(alpha = 0.9f), Color.Transparent),
+                    )
+                  )
+            )
+          }
+
+          if (canScrollBottom) {
+            Box(
+              modifier =
+                Modifier.align(Alignment.BottomCenter)
+                  .fillMaxWidth()
+                  .height(14.dp)
+                  .background(
+                    Brush.verticalGradient(
+                      colors = listOf(Color.Transparent, surfaceColor.copy(alpha = 0.92f)),
+                    )
+                  )
             )
           }
         }
       }
 
-      HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-
-      Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-          Text(
-            text = "Total Belanja",
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-          )
+      // Sticky real-time Total & Bayar footer (always visible even for long cart lists)
+      Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = totalCardColor,
+        border = BorderStroke(1.dp, totalCardBorderColor),
+        modifier = Modifier.fillMaxWidth(),
+      ) {
+        Column(
+          modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+          verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Text(
+              text = "Total Belanja",
+              style = MaterialTheme.typography.labelMedium,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (cartItems.isNotEmpty()) {
+              Text(
+                text = "${cartItems.size} jenis",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+              )
+            }
+          }
           Text(
             text = formatRupiah(totalAmount),
             style = PriceTextMedium,
             color = MaterialTheme.colorScheme.primary,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-          )
-        }
-
-        Button(
-          onClick = onOpenPaymentSheet,
-          enabled = totalItems > 0,
-          modifier = Modifier.fillMaxWidth().height(50.dp).testTag("sticky_cart_bar"),
-          shape = MaterialTheme.shapes.small,
-          contentPadding = PaddingValues(horizontal = 10.dp),
-        ) {
-          Text(
-            text = stringResource(R.string.action_pay),
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.Bold,
-          )
-          Spacer(modifier = Modifier.width(6.dp))
-          Icon(
-            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-            contentDescription = null,
-            modifier = Modifier.size(18.dp),
+            modifier =
+              Modifier.graphicsLayer {
+                scaleX = totalScale
+                scaleY = totalScale
+              }.testTag("side_cart_total_amount"),
           )
         }
       }
+
+      Button(
+        onClick = onOpenPaymentSheet,
+        enabled = totalItems > 0,
+        modifier = Modifier.fillMaxWidth().height(50.dp).testTag("sticky_cart_bar"),
+        shape = MaterialTheme.shapes.small,
+        contentPadding = PaddingValues(horizontal = 10.dp),
+      ) {
+        Text(
+          text = stringResource(R.string.action_pay),
+          style = MaterialTheme.typography.titleSmall,
+          fontWeight = FontWeight.Bold,
+        )
+        Spacer(modifier = Modifier.width(6.dp))
+        Icon(
+          imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+          contentDescription = null,
+          modifier = Modifier.size(18.dp),
+        )
+      }
     }
+  }
+}
+
+private fun Modifier.smoothLazyVerticalScrollbar(
+  state: LazyListState,
+  thumbColor: Color,
+  activeThumbColor: Color,
+  trackColor: Color,
+): Modifier = composed {
+  val isScrollable by remember {
+    derivedStateOf { state.canScrollForward || state.canScrollBackward }
+  }
+  val isScrolling = state.isScrollInProgress
+
+  val alpha by
+    animateFloatAsState(
+      targetValue =
+        when {
+          !isScrollable -> 0f
+          isScrolling -> 0.92f
+          else -> 0.45f
+        },
+      animationSpec = tween(durationMillis = 220),
+      label = "lazyScrollbarAlpha",
+    )
+
+  val thumbWidthDp by
+    animateDpAsState(
+      targetValue = if (isScrolling) 5.dp else 3.5.dp,
+      animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+      label = "lazyScrollbarWidth",
+    )
+
+  val scrollMetrics by remember {
+    derivedStateOf {
+      val layoutInfo = state.layoutInfo
+      val visibleItems = layoutInfo.visibleItemsInfo
+      val totalItems = layoutInfo.totalItemsCount
+      if (visibleItems.isEmpty() || totalItems <= 0) {
+        0f to 1f
+      } else {
+        val viewportHeight =
+          (layoutInfo.viewportEndOffset - layoutInfo.viewportStartOffset).toFloat().coerceAtLeast(1f)
+        val avgItemSize =
+          visibleItems.sumOf { it.size }.toFloat() / visibleItems.size.coerceAtLeast(1)
+        val spacing = layoutInfo.mainAxisItemSpacing.toFloat()
+        val estimatedTotalHeight =
+          (avgItemSize * totalItems + spacing * (totalItems - 1).coerceAtLeast(0))
+            .coerceAtLeast(viewportHeight)
+        val thumbFraction = (viewportHeight / estimatedTotalHeight).coerceIn(0.14f, 1f)
+        val maxScrollPx = (estimatedTotalHeight - viewportHeight).coerceAtLeast(1f)
+        val firstItem = visibleItems.first()
+        val estimatedOffsetPx = (firstItem.index * (avgItemSize + spacing)) - firstItem.offset
+        val progress =
+          when {
+            !state.canScrollBackward -> 0f
+            !state.canScrollForward -> 1f
+            else -> (estimatedOffsetPx / maxScrollPx).coerceIn(0f, 1f)
+          }
+        progress to thumbFraction
+      }
+    }
+  }
+
+  val animatedProgress by
+    animateFloatAsState(
+      targetValue = scrollMetrics.first,
+      animationSpec =
+        spring(stiffness = Spring.StiffnessHigh, dampingRatio = Spring.DampingRatioNoBouncy),
+      label = "lazyScrollbarProgress",
+    )
+
+  val animatedThumbFraction by
+    animateFloatAsState(
+      targetValue = scrollMetrics.second,
+      animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+      label = "lazyScrollbarThumbFraction",
+    )
+
+  drawWithContent {
+    drawContent()
+    if (alpha <= 0.01f) return@drawWithContent
+
+    val widthPx = thumbWidthDp.toPx()
+    val rightMarginPx = 1.dp.toPx()
+    val verticalPadPx = 3.dp.toPx()
+    val trackHeight = (size.height - verticalPadPx * 2f).coerceAtLeast(1f)
+    val minThumbPx = 28.dp.toPx().coerceAtMost(trackHeight)
+    val thumbHeight = (trackHeight * animatedThumbFraction).coerceIn(minThumbPx, trackHeight)
+    val scrollableTrack = (trackHeight - thumbHeight).coerceAtLeast(0f)
+    val thumbTop = verticalPadPx + scrollableTrack * animatedProgress
+    val barX = size.width - widthPx - rightMarginPx
+    val corner = CornerRadius(widthPx / 2f, widthPx / 2f)
+
+    drawRoundRect(
+      color = trackColor.copy(alpha = alpha * 0.30f),
+      topLeft = Offset(barX, verticalPadPx),
+      size = Size(widthPx, trackHeight),
+      cornerRadius = corner,
+    )
+
+    val activeColor = if (isScrolling) activeThumbColor else thumbColor
+    drawRoundRect(
+      color = activeColor.copy(alpha = alpha),
+      topLeft = Offset(barX, thumbTop),
+      size = Size(widthPx, thumbHeight),
+      cornerRadius = corner,
+    )
   }
 }
 
 @Composable
 private fun CompactSplitCartCard(
   item: CartLineItem,
+  isNewEntry: Boolean,
+  isHighlighted: Boolean,
   onDecrement: () -> Unit,
   onIncrement: () -> Unit,
+  modifier: Modifier = Modifier,
 ) {
   val cardShape = RoundedCornerShape(14.dp)
+  val slideProgress = remember(item.product.id) { Animatable(if (isNewEntry) 0f else 1f) }
+  LaunchedEffect(item.product.id) {
+    if (slideProgress.value < 1f) {
+      slideProgress.animateTo(
+        targetValue = 1f,
+        animationSpec =
+          spring(
+            dampingRatio = 0.80f,
+            stiffness = Spring.StiffnessMediumLow,
+          ),
+      )
+    }
+  }
+
+  val cardScale by
+    animateFloatAsState(
+      targetValue = if (isHighlighted) 1.025f else 1f,
+      animationSpec =
+        spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+      label = "cartCardScale",
+    )
+  val cardContainerColor by
+    animateColorAsState(
+      targetValue =
+        if (isHighlighted) MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.7f)
+        else MaterialTheme.colorScheme.background,
+      animationSpec = tween(durationMillis = 260),
+      label = "cartCardBg",
+    )
+  val cardBorderColor by
+    animateColorAsState(
+      targetValue =
+        if (isHighlighted) MaterialTheme.colorScheme.secondary
+        else MaterialTheme.colorScheme.outline,
+      animationSpec = tween(durationMillis = 260),
+      label = "cartCardBorder",
+    )
+  val cardBorderWidth by
+    animateDpAsState(
+      targetValue = if (isHighlighted) 2.dp else 1.dp,
+      animationSpec = tween(durationMillis = 220),
+      label = "cartCardBorderWidth",
+    )
+
   Surface(
     shape = cardShape,
-    color = MaterialTheme.colorScheme.background,
-    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-    modifier = Modifier.fillMaxWidth().clip(cardShape),
+    color = cardContainerColor,
+    border = BorderStroke(cardBorderWidth, cardBorderColor),
+    modifier =
+      modifier
+        .fillMaxWidth()
+        .graphicsLayer {
+          val p = slideProgress.value
+          translationX = -(1f - p) * 52.dp.toPx()
+          translationY = (1f - p) * 10.dp.toPx()
+          alpha = p.coerceIn(0f, 1f)
+          val entranceScale = 0.94f + 0.06f * p
+          scaleX = entranceScale * cardScale
+          scaleY = entranceScale * cardScale
+        }
+        .clip(cardShape),
   ) {
     Box(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
       Row(modifier = Modifier.matchParentSize()) {
@@ -704,13 +1265,17 @@ private fun CompactSplitCartCard(
           )
           Surface(
             shape = RoundedCornerShape(8.dp),
-            color = MaterialTheme.colorScheme.secondary,
+            color =
+              if (isHighlighted) MaterialTheme.colorScheme.primary
+              else MaterialTheme.colorScheme.secondary,
           ) {
             Text(
-              text = "×${item.quantity}",
+              text = "×${item.formattedQuantity}",
               style = MaterialTheme.typography.labelSmall,
               fontWeight = FontWeight.Bold,
-              color = MaterialTheme.colorScheme.onSecondary,
+              color =
+                if (isHighlighted) MaterialTheme.colorScheme.onPrimary
+                else MaterialTheme.colorScheme.onSecondary,
               modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
             )
           }
@@ -818,123 +1383,6 @@ private fun ShopNameEditDialog(
       }
     },
   )
-}
-
-@Composable
-private fun ProductGridCard(
-  product: ProductEntity,
-  qtyInCart: Int,
-  compactCard: Boolean,
-  onTap: () -> Unit,
-  onEditClick: () -> Unit,
-) {
-  val inCart = qtyInCart > 0
-  val padStart = if (compactCard) 10.dp else 14.dp
-  val padBottom = if (compactCard) 10.dp else 14.dp
-
-  Card(
-    onClick = onTap,
-    modifier = Modifier.fillMaxWidth().testTag("product_card_${product.id}"),
-    shape = MaterialTheme.shapes.medium,
-    colors =
-      CardDefaults.cardColors(
-        containerColor =
-          if (inCart) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
-          else MaterialTheme.colorScheme.surface
-      ),
-    border =
-      BorderStroke(
-        width = if (inCart) 1.5.dp else 1.dp,
-        color =
-          if (inCart) MaterialTheme.colorScheme.primary
-          else MaterialTheme.colorScheme.outline,
-      ),
-  ) {
-    Column(
-      modifier = Modifier.fillMaxWidth().padding(start = padStart, end = 6.dp, top = 6.dp, bottom = padBottom),
-      verticalArrangement = Arrangement.spacedBy(5.dp),
-    ) {
-      Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-      ) {
-        Row(
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-          Surface(
-            shape = RoundedCornerShape(8.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant,
-          ) {
-            Text(
-              text = product.unit,
-              style = MaterialTheme.typography.labelSmall,
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
-              modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
-            )
-          }
-          if (!product.barcode.isNullOrBlank()) {
-            Icon(
-              imageVector = Icons.Filled.QrCode2,
-              contentDescription = "Memiliki barcode",
-              tint = MaterialTheme.colorScheme.onSurfaceVariant,
-              modifier = Modifier.size(15.dp),
-            )
-          }
-        }
-
-        IconButton(
-          onClick = onEditClick,
-          modifier = Modifier.minimumInteractiveComponentSize().size(34.dp).testTag("edit_product_${product.id}"),
-        ) {
-          Icon(
-            imageVector = Icons.Outlined.Edit,
-            contentDescription = "Ubah ${product.name}",
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(17.dp),
-          )
-        }
-      }
-
-      Text(
-        text = product.name,
-        style = if (compactCard) MaterialTheme.typography.titleSmall else MaterialTheme.typography.titleMedium,
-        color = MaterialTheme.colorScheme.onSurface,
-        maxLines = 2,
-        overflow = TextOverflow.Ellipsis,
-        minLines = 2,
-        modifier = Modifier.padding(end = 4.dp),
-      )
-
-      Row(
-        modifier = Modifier.fillMaxWidth().padding(end = 4.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-      ) {
-        Text(
-          text = formatRupiah(product.price),
-          style = PriceTextMedium,
-          color = MaterialTheme.colorScheme.primary,
-        )
-
-        if (inCart) {
-          Surface(
-            shape = RoundedCornerShape(10.dp),
-            color = MaterialTheme.colorScheme.secondary,
-          ) {
-            Text(
-              text = "×$qtyInCart",
-              style = MaterialTheme.typography.labelMedium,
-              fontWeight = FontWeight.Bold,
-              color = MaterialTheme.colorScheme.onSecondary,
-              modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
-            )
-          }
-        }
-      }
-    }
-  }
 }
 
 @Composable

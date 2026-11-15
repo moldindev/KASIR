@@ -5,6 +5,10 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.ProductEntity
 import com.example.data.SembakoPosRepository
 import com.example.data.ShopPreferencesRepository
+import com.example.util.calculateDecimalSubtotal
+import com.example.util.calculateFractionalSubtotal
+import com.example.util.formatQuarterQuantity
+import kotlin.math.ceil
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -15,6 +19,12 @@ import kotlinx.coroutines.launch
 
 val RUPIAH_BANKNOTES = listOf(1000L, 2000L, 5000L, 10000L, 20000L, 50000L, 100000L)
 
+enum class QuantityStep(val quarters: Int, val label: String) {
+  WHOLE(4, "1"),
+  HALF(2, "1/2"),
+  QUARTER(1, "1/4"),
+}
+
 enum class ScannerMode {
   CHECKOUT,
   PICK_FOR_PRODUCT,
@@ -22,10 +32,16 @@ enum class ScannerMode {
 
 data class CartLineItem(
   val product: ProductEntity,
-  val quantity: Int,
+  val quarterUnits: Int,
 ) {
+  val quantity: Double
+    get() = quarterUnits / 4.0
+
+  val formattedQuantity: String
+    get() = formatQuarterQuantity(quarterUnits)
+
   val subtotal: Long
-    get() = product.price * quantity
+    get() = calculateFractionalSubtotal(product.price, quarterUnits)
 }
 
 data class ProductEditorState(
@@ -52,10 +68,10 @@ data class ReceiptLineItem(
   val name: String,
   val unit: String,
   val unitPrice: Long,
-  val quantity: Int,
+  val quantity: Double,
 ) {
   val subtotal: Long
-    get() = unitPrice * quantity
+    get() = calculateDecimalSubtotal(unitPrice, quantity)
 }
 
 data class CashierUiState(
@@ -64,6 +80,8 @@ data class CashierUiState(
   val allProducts: List<ProductEntity> = emptyList(),
   val filteredProducts: List<ProductEntity> = emptyList(),
   val searchQuery: String = "",
+  val quantityStep: QuantityStep = QuantityStep.WHOLE,
+  // Quarter-unit quantities per product ID (4 = 1 unit, 2 = 1/2 unit, 1 = 1/4 unit)
   val cartQuantities: Map<Long, Int> = emptyMap(),
   val cartItems: List<CartLineItem> = emptyList(),
   val totalAmount: Long = 0L,
@@ -82,10 +100,13 @@ data class CashierUiState(
   val isSavingSale: Boolean = false,
   val scanBannerMessage: String? = null,
   val completedReceipt: ReceiptData? = null,
+  val lastAddedProductId: Long? = null,
+  val lastAddedEventId: Long = 0L,
 )
 
 private data class CashierDraftState(
   val searchQuery: String = "",
+  val quantityStep: QuantityStep = QuantityStep.WHOLE,
   val cartQuantities: Map<Long, Int> = emptyMap(),
   val isScannerOpen: Boolean = false,
   val scannerMode: ScannerMode = ScannerMode.CHECKOUT,
@@ -98,6 +119,8 @@ private data class CashierDraftState(
   val isSavingSale: Boolean = false,
   val scanBannerMessage: String? = null,
   val completedReceipt: ReceiptData? = null,
+  val lastAddedProductId: Long? = null,
+  val lastAddedEventId: Long = 0L,
 )
 
 class CashierViewModel(
@@ -114,9 +137,9 @@ class CashierViewModel(
       val productMap = products.associateBy { it.id }
       val validQuantities = draft.cartQuantities.filterKeys { productMap.containsKey(it) }
       val cartItems =
-        validQuantities.mapNotNull { (productId, qty) ->
+        validQuantities.mapNotNull { (productId, quarterQty) ->
           val product = productMap[productId]
-          if (product != null && qty > 0) CartLineItem(product, qty) else null
+          if (product != null && quarterQty > 0) CartLineItem(product, quarterQty) else null
         }
 
       val query = draft.searchQuery.trim()
@@ -141,7 +164,7 @@ class CashierViewModel(
         }
 
       val totalAmount = cartItems.sumOf { it.subtotal }
-      val totalItems = cartItems.sumOf { it.quantity }
+      val totalItems = cartItems.sumOf { ceil(it.quarterUnits / 4.0).toInt() }
       val effectiveExactCash = draft.isExactCash && totalAmount > 0L
       val cashPaid =
         if (effectiveExactCash) {
@@ -150,7 +173,7 @@ class CashierViewModel(
           draft.billCounts.entries.sumOf { (denom, count) -> denom * count }
         }
       val changeAmount = cashPaid - totalAmount
-      val canComplete = totalItems > 0 && cashPaid >= totalAmount && !draft.isSavingSale
+      val canComplete = cartItems.isNotEmpty() && cashPaid >= totalAmount && !draft.isSavingSale
 
       CashierUiState(
         shopName = shopName,
@@ -158,6 +181,7 @@ class CashierViewModel(
         allProducts = products,
         filteredProducts = filtered,
         searchQuery = draft.searchQuery,
+        quantityStep = draft.quantityStep,
         cartQuantities = validQuantities,
         cartItems = cartItems,
         totalAmount = totalAmount,
@@ -176,6 +200,8 @@ class CashierViewModel(
         isSavingSale = draft.isSavingSale,
         scanBannerMessage = draft.scanBannerMessage,
         completedReceipt = draft.completedReceipt,
+        lastAddedProductId = draft.lastAddedProductId,
+        lastAddedEventId = draft.lastAddedEventId,
       )
     }.stateIn(
       scope = viewModelScope,
@@ -200,21 +226,35 @@ class CashierViewModel(
     draftState.update { it.copy(searchQuery = query) }
   }
 
-  fun addToCart(product: ProductEntity) {
+  fun selectQuantityStep(step: QuantityStep) {
+    draftState.update { it.copy(quantityStep = step) }
+  }
+
+  fun addToCart(product: ProductEntity, quarters: Int = draftState.value.quantityStep.quarters) {
+    val safeQuarters = quarters.coerceAtLeast(1)
     draftState.update { state ->
-      val currentQty = state.cartQuantities[product.id] ?: 0
-      state.copy(cartQuantities = state.cartQuantities + (product.id to currentQty + 1))
+      val currentQuarters = state.cartQuantities[product.id] ?: 0
+      state.copy(
+        cartQuantities = state.cartQuantities + (product.id to currentQuarters + safeQuarters),
+        lastAddedProductId = product.id,
+        lastAddedEventId = state.lastAddedEventId + 1L,
+      )
     }
   }
 
-  fun decrementFromCart(productId: Long) {
+  fun decrementFromCart(
+    productId: Long,
+    quarters: Int = draftState.value.quantityStep.quarters,
+  ) {
+    val safeQuarters = quarters.coerceAtLeast(1)
     draftState.update { state ->
-      val currentQty = state.cartQuantities[productId] ?: 0
+      val currentQuarters = state.cartQuantities[productId] ?: 0
+      val nextQuarters = currentQuarters - safeQuarters
       val updated =
-        if (currentQty <= 1) {
+        if (nextQuarters <= 0) {
           state.cartQuantities - productId
         } else {
-          state.cartQuantities + (productId to currentQty - 1)
+          state.cartQuantities + (productId to nextQuarters)
         }
       val shouldResetExact = updated.isEmpty()
       state.copy(
@@ -231,6 +271,7 @@ class CashierViewModel(
         billCounts = emptyMap(),
         isExactCash = false,
         isPaymentSheetOpen = false,
+        lastAddedProductId = null,
       )
     }
   }
@@ -301,11 +342,15 @@ class CashierViewModel(
         if (!draftState.value.isScannerOpen) return@launch
         if (existing != null) {
           draftState.update { state ->
-            val currentQty = state.cartQuantities[existing.id] ?: 0
-            val nextQty = currentQty + 1
+            val currentQuarters = state.cartQuantities[existing.id] ?: 0
+            // Barcode scan always adds 1 whole packaged unit (4 quarter-units)
+            val nextQuarters = currentQuarters + QuantityStep.WHOLE.quarters
             state.copy(
-              cartQuantities = state.cartQuantities + (existing.id to nextQty),
-              scanBannerMessage = "Ditambahkan: ${existing.name} (×$nextQty)",
+              cartQuantities = state.cartQuantities + (existing.id to nextQuarters),
+              scanBannerMessage =
+                "Ditambahkan: ${existing.name} (×${formatQuarterQuantity(nextQuarters)})",
+              lastAddedProductId = existing.id,
+              lastAddedEventId = state.lastAddedEventId + 1L,
             )
           }
         } else {
@@ -418,14 +463,19 @@ class CashierViewModel(
       draftState.update { state ->
         val nextCart =
           if (editor.addToCartOnSave && savedId > 0L) {
-            val currentQty = state.cartQuantities[savedId] ?: 0
-            state.cartQuantities + (savedId to currentQty + 1)
+            val currentQuarters = state.cartQuantities[savedId] ?: 0
+            state.cartQuantities + (savedId to currentQuarters + QuantityStep.WHOLE.quarters)
           } else {
             state.cartQuantities
           }
         state.copy(
           productEditorState = null,
           cartQuantities = nextCart,
+          lastAddedProductId =
+            if (editor.addToCartOnSave && savedId > 0L) savedId else state.lastAddedProductId,
+          lastAddedEventId =
+            if (editor.addToCartOnSave && savedId > 0L) state.lastAddedEventId + 1L
+            else state.lastAddedEventId,
         )
       }
     }
@@ -543,6 +593,7 @@ class CashierViewModel(
           isPaymentSheetOpen = false,
           isSavingSale = false,
           completedReceipt = receipt,
+          lastAddedProductId = null,
         )
       }
     }

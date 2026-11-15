@@ -69,9 +69,9 @@ class SembakoPosRepository(private val dao: PosDao) {
     totalAmount: Long,
     cashPaid: Long,
     changeAmount: Long,
-    items: List<Pair<ProductEntity, Int>>,
+    items: List<Pair<ProductEntity, Double>>,
   ): Long {
-    val totalItems = items.sumOf { it.second }
+    val totalItems = items.sumOf { kotlin.math.ceil(it.second).toInt().coerceAtLeast(1) }
     val transaction =
       TransactionEntity(
         timestamp = System.currentTimeMillis(),

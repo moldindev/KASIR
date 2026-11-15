@@ -9,8 +9,11 @@ import com.example.data.ProductEntity
 import com.example.data.SembakoPosRepository
 import com.example.data.ShopPreferencesRepository
 import com.example.ui.viewmodel.CashierViewModel
+import com.example.ui.viewmodel.QuantityStep
 import com.example.ui.viewmodel.ScannerMode
 import com.example.util.DateFilter
+import com.example.util.formatDecimalQuantity
+import com.example.util.formatQuarterQuantity
 import com.example.util.formatRupiah
 import com.example.util.getDayRangeMillis
 import java.io.File
@@ -86,37 +89,86 @@ class ExampleRobolectricTest {
   }
 
   @Test
-  fun `format rupiah formats Indonesian thousands separator`() {
+  fun `format rupiah and fractional quantity helpers format cleanly`() {
     assertEquals("Rp 15.000", formatRupiah(15000L))
     assertEquals("Rp 0", formatRupiah(0L))
+    assertEquals("1/4", formatQuarterQuantity(1))
+    assertEquals("1/2", formatQuarterQuantity(2))
+    assertEquals("3/4", formatQuarterQuantity(3))
+    assertEquals("1", formatQuarterQuantity(4))
+    assertEquals("1 1/2", formatQuarterQuantity(6))
+    assertEquals("1/2", formatDecimalQuantity(0.5))
+    assertEquals("2", formatDecimalQuantity(2.0))
   }
 
   @Test
-  fun `save product lookup by barcode and record sale updates today revenue`() = runTest {
+  fun `save product lookup by barcode and record fractional sale updates today revenue`() = runTest {
     val productId =
       repository.saveProduct(
-        name = "Minyak Goreng 1 L",
-        price = 17500L,
-        unit = "pouch",
+        name = "Telur Ayam Negeri",
+        price = 28000L,
+        unit = "kg",
         barcode = "8992761139018",
       )
     val found = repository.findProductByBarcode("8992761139018")
     assertNotNull(found)
     assertEquals(productId, found?.id)
 
+    // Sell 1/2 kg Telur = Rp 14.000
     repository.recordSale(
-      totalAmount = 35000L,
-      cashPaid = 50000L,
-      changeAmount = 15000L,
-      items = listOf(found!! to 2),
+      totalAmount = 14000L,
+      cashPaid = 20000L,
+      changeAmount = 6000L,
+      items = listOf(found!! to 0.5),
     )
 
     val (start, end) = getDayRangeMillis(DateFilter.TODAY)
     val todaySales = repository.observeTransactions(start, end).first()
     assertEquals(1, todaySales.size)
-    assertEquals(35000L, todaySales.first().transaction.totalAmount)
-    assertEquals(15000L, todaySales.first().transaction.changeAmount)
-    assertEquals(2, todaySales.first().items.first().quantity)
+    assertEquals(14000L, todaySales.first().transaction.totalAmount)
+    assertEquals(6000L, todaySales.first().transaction.changeAmount)
+    assertEquals(0.5, todaySales.first().items.first().quantity, 0.001)
+  }
+
+  @Test
+  fun `fractional step checkout supports half and quarter units without typing`() = runTest {
+    val telurId =
+      repository.saveProduct(
+        name = "Telur Ayam Negeri",
+        price = 28000L,
+        unit = "kg",
+        barcode = null,
+      )
+    val telur = ProductEntity(id = telurId, name = "Telur Ayam Negeri", price = 28000L, unit = "kg", barcode = null)
+
+    val viewModel = CashierViewModel(repository, shopPreferences)
+    val collectJob = launch { viewModel.uiState.collect {} }
+
+    // Select 1/2 step and tap Telur -> adds 1/2 kg (Rp 14.000)
+    viewModel.selectQuantityStep(QuantityStep.HALF)
+    viewModel.addToCart(telur)
+    val afterHalf = viewModel.uiState.first { it.totalAmount == 14000L }
+    assertEquals("1/2", afterHalf.cartItems.first().formattedQuantity)
+    assertEquals(1, afterHalf.totalItems)
+
+    // Switch to 1/4 step and add -> becomes 3/4 kg (Rp 21.000)
+    viewModel.selectQuantityStep(QuantityStep.QUARTER)
+    viewModel.addToCart(telur)
+    val afterThreeQuarters = viewModel.uiState.first { it.totalAmount == 21000L }
+    assertEquals("3/4", afterThreeQuarters.cartItems.first().formattedQuantity)
+
+    // Pay with 20.000 + 2.000 = 22.000 -> change 1.000
+    viewModel.incrementBill(20000L)
+    viewModel.incrementBill(2000L)
+    val readyState = viewModel.uiState.first { it.canCompleteSale }
+    assertEquals(1000L, readyState.changeAmount)
+
+    viewModel.completeSale()
+    val receiptState = viewModel.uiState.first { it.completedReceipt != null }
+    assertEquals(0.75, receiptState.completedReceipt!!.items.first().quantity, 0.001)
+    assertEquals(21000L, receiptState.completedReceipt!!.totalAmount)
+
+    collectJob.cancel()
   }
 
   @Test
@@ -124,7 +176,6 @@ class ExampleRobolectricTest {
     val viewModel = CashierViewModel(repository, shopPreferences)
     val collectJob = launch { viewModel.uiState.collect {} }
 
-    // 1. Register a product using PICK_FOR_PRODUCT scanner mode
     viewModel.openAddProduct()
     viewModel.updateEditorName("Kecap Manis 275ml")
     viewModel.updateEditorPrice("13500")
@@ -144,7 +195,6 @@ class ExampleRobolectricTest {
     val savedState = viewModel.uiState.first { it.allProducts.size == 1 && it.productEditorState == null }
     assertEquals(1, savedState.allProducts.size)
 
-    // 2. Ring up the registered product via CHECKOUT scanner mode
     viewModel.openCheckoutScanner()
     advanceUntilIdle()
     assertEquals(ScannerMode.CHECKOUT, viewModel.uiState.value.scannerMode)
@@ -153,7 +203,6 @@ class ExampleRobolectricTest {
     val afterFirstScan = viewModel.uiState.first { it.totalItems == 1 }
     assertEquals(13500L, afterFirstScan.totalAmount)
 
-    // Scanning again increments quantity
     viewModel.onBarcodeScanned("8999999036614")
     val afterSecondScan = viewModel.uiState.first { it.totalItems == 2 }
     assertEquals(27000L, afterSecondScan.totalAmount)
@@ -179,7 +228,6 @@ class ExampleRobolectricTest {
     val withCart = viewModel.uiState.first { it.totalAmount == 72000L }
     assertFalse(withCart.canCompleteSale)
 
-    // Add 1x 50.000 + 2x 10.000 + 1x 5.000 = 75.000
     viewModel.incrementBill(50000L)
     viewModel.incrementBill(10000L)
     viewModel.incrementBill(10000L)
@@ -188,24 +236,20 @@ class ExampleRobolectricTest {
     assertEquals(3000L, afterBills.changeAmount)
     assertTrue(afterBills.canCompleteSale)
 
-    // Subtract 1x 10.000 -> 65.000 (insufficient)
     viewModel.decrementBill(10000L)
     val afterMinus = viewModel.uiState.first { it.cashPaid == 65000L }
     assertEquals(-7000L, afterMinus.changeAmount)
     assertFalse(afterMinus.canCompleteSale)
 
-    // Exact cash sets cashPaid == totalAmount
     viewModel.selectExactCash()
     val exactState = viewModel.uiState.first { it.isExactCash && it.cashPaid == 72000L }
     assertEquals(0L, exactState.changeAmount)
     assertTrue(exactState.canCompleteSale)
 
-    // Reset cash returns cashPaid to 0
     viewModel.resetCash()
     val resetState = viewModel.uiState.first { !it.isExactCash && it.cashPaid == 0L }
     assertFalse(resetState.canCompleteSale)
 
-    // Update shop name persists via DataStore
     viewModel.saveShopName("Toko Berkah Ibu")
     val renamedState = viewModel.uiState.first { it.shopName == "Toko Berkah Ibu" }
     assertEquals("Toko Berkah Ibu", renamedState.shopName)
@@ -222,7 +266,6 @@ class ExampleRobolectricTest {
         cooldownMillis = 1800L,
       )
 
-    // Corrupted check digit on EAN-13 must be rejected
     assertNull(
       stabilizer.onFrameDetected(
         rawValue = "8992761139019",
@@ -231,7 +274,6 @@ class ExampleRobolectricTest {
       )
     )
 
-    // Single glitchy frame (even if valid check digit) should not trigger confirmation
     assertNull(
       stabilizer.onFrameDetected(
         rawValue = "8992761139025",
@@ -240,7 +282,6 @@ class ExampleRobolectricTest {
       )
     )
 
-    // 3 consecutive consistent frames confirm the real barcode
     assertNull(
       stabilizer.onFrameDetected(
         rawValue = "8992761139018",
@@ -264,7 +305,6 @@ class ExampleRobolectricTest {
       ),
     )
 
-    // Within cooldown window, same barcode does not double-fire
     assertNull(
       stabilizer.onFrameDetected(
         rawValue = "8992761139018",
@@ -309,4 +349,52 @@ class ExampleRobolectricTest {
     assertNotNull(foundFromEan13)
     assertEquals(savedId, foundFromEan13?.id)
   }
+
+  @Test
+  fun `adding items emits visual feedback event id and updates real-time total across long list`() =
+    runTest {
+      val products =
+        (1..12).map { index ->
+          val id =
+            repository.saveProduct(
+              name = "Barang Sembako $index",
+              price = index * 1000L,
+              unit = "pcs",
+              barcode = null,
+            )
+          ProductEntity(
+            id = id,
+            name = "Barang Sembako $index",
+            price = index * 1000L,
+            unit = "pcs",
+            barcode = null,
+          )
+        }
+
+      val viewModel = CashierViewModel(repository, shopPreferences)
+      val collectJob = launch { viewModel.uiState.collect {} }
+
+      var expectedTotal = 0L
+      products.forEachIndexed { idx, product ->
+        viewModel.addToCart(product)
+        expectedTotal += product.price
+        val state = viewModel.uiState.first { it.lastAddedEventId == (idx + 1).toLong() }
+        assertEquals(product.id, state.lastAddedProductId)
+        assertEquals(expectedTotal, state.totalAmount)
+        assertEquals(idx + 1, state.cartItems.size)
+      }
+
+      // Decrement should not advance lastAddedEventId, while total stays accurate
+      viewModel.decrementFromCart(products.first().id)
+      val afterDecrement = viewModel.uiState.first { it.totalAmount == expectedTotal - 1000L }
+      assertEquals(12L, afterDecrement.lastAddedEventId)
+      assertEquals(11, afterDecrement.cartItems.size)
+
+      viewModel.clearCart()
+      val cleared = viewModel.uiState.first { it.cartItems.isEmpty() }
+      assertNull(cleared.lastAddedProductId)
+      assertEquals(0L, cleared.totalAmount)
+
+      collectJob.cancel()
+    }
 }
