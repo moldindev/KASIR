@@ -1,5 +1,7 @@
 <resources>
     <string name="app_name">Kasir Sembako</string>
+    <string name="shop_name_default">Kasir Sembako</string>
+    <string name="action_edit_shop_name">Ubah Nama Toko</string>
     <string name="nav_kasir">Kasir</string>
     <string name="nav_riwayat">Riwayat</string>
     <string name="search_placeholder">Cari nama atau barcode…</string>

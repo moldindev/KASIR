@@ -7,6 +7,8 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -25,6 +27,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -36,6 +39,7 @@ import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.ShoppingBasket
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -49,8 +53,13 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -58,6 +67,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -84,9 +94,14 @@ fun CashierScreen(
   onOpenEditProduct: (ProductEntity) -> Unit,
   onLoadStarterProducts: () -> Unit,
   onOpenPaymentSheet: () -> Unit,
-  onCashInputChange: (String) -> Unit,
-  onSelectQuickCash: (Long) -> Unit,
+  onIncrementBill: (Long) -> Unit,
+  onDecrementBill: (Long) -> Unit,
+  onSelectExactCash: () -> Unit,
+  onResetCash: () -> Unit,
   onCompleteSale: () -> Unit,
+  onEditShopNameClick: () -> Unit,
+  onDismissShopNameDialog: () -> Unit,
+  onSaveShopName: (String) -> Unit,
   modifier: Modifier = Modifier,
 ) {
   BoxWithConstraints(modifier = modifier.fillMaxSize()) {
@@ -105,6 +120,7 @@ fun CashierScreen(
           onOpenAddProduct = onOpenAddProduct,
           onOpenEditProduct = onOpenEditProduct,
           onLoadStarterProducts = onLoadStarterProducts,
+          onEditShopNameClick = onEditShopNameClick,
           bottomContentPadding = 24.dp,
           modifier = Modifier.weight(1.25f).fillMaxHeight(),
         )
@@ -118,7 +134,8 @@ fun CashierScreen(
           CheckoutPaymentContent(
             cartItems = uiState.cartItems,
             totalAmount = uiState.totalAmount,
-            cashInputText = uiState.cashInputText,
+            billCounts = uiState.billCounts,
+            isExactCash = uiState.isExactCash,
             cashPaid = uiState.cashPaid,
             changeAmount = uiState.changeAmount,
             canCompleteSale = uiState.canCompleteSale,
@@ -126,8 +143,10 @@ fun CashierScreen(
             onIncrementItem = onIncrementCartItem,
             onDecrementItem = onDecrementCartItem,
             onClearCart = onClearCart,
-            onCashInputChange = onCashInputChange,
-            onSelectQuickCash = onSelectQuickCash,
+            onIncrementBill = onIncrementBill,
+            onDecrementBill = onDecrementBill,
+            onSelectExactCash = onSelectExactCash,
+            onResetCash = onResetCash,
             onCompleteSale = onCompleteSale,
             modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
           )
@@ -143,6 +162,7 @@ fun CashierScreen(
           onOpenAddProduct = onOpenAddProduct,
           onOpenEditProduct = onOpenEditProduct,
           onLoadStarterProducts = onLoadStarterProducts,
+          onEditShopNameClick = onEditShopNameClick,
           bottomContentPadding = if (uiState.totalItems > 0) 96.dp else 16.dp,
           modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
         )
@@ -162,6 +182,70 @@ fun CashierScreen(
       }
     }
   }
+
+  if (uiState.isShopNameDialogOpen) {
+    ShopNameEditDialog(
+      currentName = uiState.shopName,
+      onDismiss = onDismissShopNameDialog,
+      onSave = onSaveShopName,
+    )
+  }
+}
+
+@Composable
+private fun ShopNameEditDialog(
+  currentName: String,
+  onDismiss: () -> Unit,
+  onSave: (String) -> Unit,
+) {
+  var nameInput by remember(currentName) { mutableStateOf(currentName) }
+
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    containerColor = MaterialTheme.colorScheme.surface,
+    title = {
+      Text(
+        text = stringResource(R.string.action_edit_shop_name),
+        style = MaterialTheme.typography.titleLarge,
+      )
+    },
+    text = {
+      Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+          text = "Nama toko akan tampil di layar kasir dan di bagian atas struk transaksi.",
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        OutlinedTextField(
+          value = nameInput,
+          onValueChange = { if (it.length <= 40) nameInput = it },
+          label = { Text("Nama Toko") },
+          placeholder = { Text("Contoh: Toko Berkah Jaya") },
+          singleLine = true,
+          shape = MaterialTheme.shapes.small,
+          modifier = Modifier.fillMaxWidth().testTag("shop_name_input"),
+        )
+      }
+    },
+    confirmButton = {
+      Button(
+        onClick = { onSave(nameInput) },
+        enabled = nameInput.isNotBlank(),
+        modifier = Modifier.height(48.dp).testTag("save_shop_name_button"),
+        shape = MaterialTheme.shapes.small,
+      ) {
+        Text("Simpan")
+      }
+    },
+    dismissButton = {
+      TextButton(
+        onClick = onDismiss,
+        modifier = Modifier.height(48.dp),
+      ) {
+        Text("Batal")
+      }
+    },
+  )
 }
 
 @Composable
@@ -173,29 +257,73 @@ private fun CatalogColumn(
   onOpenAddProduct: () -> Unit,
   onOpenEditProduct: (ProductEntity) -> Unit,
   onLoadStarterProducts: () -> Unit,
+  onEditShopNameClick: () -> Unit,
   bottomContentPadding: androidx.compose.ui.unit.Dp,
   modifier: Modifier = Modifier,
 ) {
   Column(modifier = modifier) {
     Spacer(modifier = Modifier.height(12.dp))
 
-    // Top Header
+    // Top Header with Cat Mascot Avatar + Editable Store Name + Action Buttons
     Row(
       modifier = Modifier.fillMaxWidth(),
       horizontalArrangement = Arrangement.SpaceBetween,
       verticalAlignment = Alignment.CenterVertically,
     ) {
-      Column(modifier = Modifier.weight(1f)) {
-        Text(
-          text = stringResource(R.string.app_name),
-          style = MaterialTheme.typography.headlineMedium,
-          color = MaterialTheme.colorScheme.onBackground,
+      Row(
+        modifier =
+          Modifier.weight(1f)
+            .padding(end = 8.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .clickable(
+              role = Role.Button,
+              onClickLabel = stringResource(R.string.action_edit_shop_name),
+              onClick = onEditShopNameClick,
+            )
+            .padding(vertical = 4.dp, horizontal = 2.dp)
+            .testTag("edit_shop_name_button"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+      ) {
+        Image(
+          painter = painterResource(id = R.drawable.img_shop_mascot),
+          contentDescription = "Logo ${uiState.shopName}",
+          contentScale = ContentScale.Crop,
+          modifier =
+            Modifier.size(46.dp)
+              .clip(CircleShape)
+              .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape),
         )
-        Text(
-          text = "Ketuk barang atau scan barcode",
-          style = MaterialTheme.typography.bodySmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+
+        Column(modifier = Modifier.weight(1f)) {
+          Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+          ) {
+            Text(
+              text = uiState.shopName,
+              style = MaterialTheme.typography.titleLarge,
+              fontWeight = FontWeight.Bold,
+              color = MaterialTheme.colorScheme.onBackground,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+              modifier = Modifier.weight(1f, fill = false),
+            )
+            Icon(
+              imageVector = Icons.Outlined.Edit,
+              contentDescription = stringResource(R.string.action_edit_shop_name),
+              tint = MaterialTheme.colorScheme.primary,
+              modifier = Modifier.size(16.dp),
+            )
+          }
+          Text(
+            text = "Ketuk barang atau scan barcode",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+        }
       }
 
       Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -203,7 +331,7 @@ private fun CatalogColumn(
           onClick = onOpenAddProduct,
           modifier = Modifier.height(48.dp).testTag("add_product_button"),
           shape = MaterialTheme.shapes.small,
-          contentPadding = PaddingValues(horizontal = 14.dp),
+          contentPadding = PaddingValues(horizontal = 12.dp),
         ) {
           Icon(
             imageVector = Icons.Filled.Add,
@@ -328,7 +456,7 @@ private fun ProductGridCard(
     colors =
       CardDefaults.cardColors(
         containerColor =
-          if (inCart) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.28f)
+          if (inCart) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
           else MaterialTheme.colorScheme.surface
       ),
     border =
@@ -340,7 +468,7 @@ private fun ProductGridCard(
       ),
   ) {
     Column(
-      modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 6.dp, top = 6.dp, bottom = 12.dp),
+      modifier = Modifier.fillMaxWidth().padding(start = 14.dp, end = 8.dp, top = 8.dp, bottom = 14.dp),
       verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
       Row(
@@ -440,7 +568,7 @@ private fun StickyCartBar(
     modifier = Modifier.fillMaxWidth().testTag("sticky_cart_bar"),
   ) {
     Row(
-      modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+      modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.SpaceBetween,
     ) {
@@ -460,7 +588,7 @@ private fun StickyCartBar(
               imageVector = Icons.Filled.ShoppingBasket,
               contentDescription = null,
               tint = MaterialTheme.colorScheme.onPrimary,
-              modifier = Modifier.size(20.dp),
+              modifier = Modifier.size(22.dp),
             )
           }
         }
@@ -468,7 +596,7 @@ private fun StickyCartBar(
           Text(
             text = "$totalItems barang dipilih",
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.86f),
+            color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.88f),
           )
           Text(
             text = formatRupiah(totalAmount),
@@ -483,7 +611,7 @@ private fun StickyCartBar(
         color = MaterialTheme.colorScheme.secondary,
       ) {
         Row(
-          modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+          modifier = Modifier.padding(horizontal = 16.dp, vertical = 11.dp),
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
@@ -540,7 +668,7 @@ private fun EmptyCatalogState(
     Spacer(modifier = Modifier.height(18.dp))
     Button(
       onClick = onAddProduct,
-      modifier = Modifier.fillMaxWidth().height(48.dp).testTag("empty_add_product_button"),
+      modifier = Modifier.fillMaxWidth().height(50.dp).testTag("empty_add_product_button"),
       shape = MaterialTheme.shapes.small,
     ) {
       Icon(imageVector = Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -550,7 +678,7 @@ private fun EmptyCatalogState(
     Spacer(modifier = Modifier.height(10.dp))
     OutlinedButton(
       onClick = onLoadStarterProducts,
-      modifier = Modifier.fillMaxWidth().height(48.dp).testTag("load_starter_products_button"),
+      modifier = Modifier.fillMaxWidth().height(50.dp).testTag("load_starter_products_button"),
       shape = MaterialTheme.shapes.small,
     ) {
       Text(stringResource(R.string.action_load_starter))

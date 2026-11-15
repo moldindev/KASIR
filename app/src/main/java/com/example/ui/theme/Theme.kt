@@ -8,45 +8,45 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.unit.dp
 
-private val WarmLightColorScheme =
+private val BoutiqueLightColorScheme =
   lightColorScheme(
-    primary = ForestPrimary,
-    onPrimary = ForestOnPrimary,
-    primaryContainer = ForestPrimaryContainer,
-    onPrimaryContainer = ForestOnPrimaryContainer,
-    secondary = TerracottaSecondary,
-    onSecondary = TerracottaOnSecondary,
-    secondaryContainer = TerracottaContainer,
-    onSecondaryContainer = TerracottaOnContainer,
+    primary = SagePrimary,
+    onPrimary = SageOnPrimary,
+    primaryContainer = SagePrimaryContainer,
+    onPrimaryContainer = SageOnPrimaryContainer,
+    secondary = CopperSecondary,
+    onSecondary = CopperOnSecondary,
+    secondaryContainer = CopperContainer,
+    onSecondaryContainer = CopperOnContainer,
     tertiary = AmberTertiary,
     tertiaryContainer = AmberContainer,
-    background = WarmPaperBackground,
-    onBackground = InkPrimary,
-    surface = WarmCardSurface,
-    onSurface = InkPrimary,
-    surfaceVariant = WarmCreamSurfaceVariant,
-    onSurfaceVariant = InkSecondary,
-    surfaceContainerLow = WarmPaperBackground,
-    surfaceContainer = WarmSurfaceContainer,
-    surfaceContainerHigh = WarmCreamSurfaceVariant,
-    outline = WarmOutline,
-    outlineVariant = WarmOutline,
+    background = BoutiqueAlabasterBg,
+    onBackground = CharcoalInkPrimary,
+    surface = BoutiquePureSurface,
+    onSurface = CharcoalInkPrimary,
+    surfaceVariant = BoutiqueStoneSurfaceVariant,
+    onSurfaceVariant = CharcoalInkSecondary,
+    surfaceContainerLow = BoutiqueAlabasterBg,
+    surfaceContainer = BoutiqueWarmContainer,
+    surfaceContainerHigh = BoutiqueStoneSurfaceVariant,
+    outline = BoutiqueHairlineOutline,
+    outlineVariant = BoutiqueHairlineOutline,
     error = BrickError,
     onError = BrickOnError,
     errorContainer = BrickErrorContainer,
     onErrorContainer = BrickOnErrorContainer,
   )
 
-private val WarmDarkColorScheme =
+private val BoutiqueDarkColorScheme =
   darkColorScheme(
     primary = DarkPrimary,
     onPrimary = DarkOnPrimary,
-    primaryContainer = ForestPrimary,
-    onPrimaryContainer = ForestPrimaryContainer,
+    primaryContainer = SagePrimary,
+    onPrimaryContainer = SagePrimaryContainer,
     secondary = DarkSecondary,
-    onSecondary = TerracottaOnContainer,
-    secondaryContainer = TerracottaOnContainer,
-    onSecondaryContainer = TerracottaContainer,
+    onSecondary = CopperOnContainer,
+    secondaryContainer = CopperOnContainer,
+    onSecondaryContainer = CopperContainer,
     background = DarkBackground,
     onBackground = DarkTextPrimary,
     surface = DarkSurface,
@@ -62,9 +62,9 @@ private val WarmDarkColorScheme =
 
 val AppShapes =
   Shapes(
-    small = RoundedCornerShape(10.dp),
-    medium = RoundedCornerShape(16.dp),
-    large = RoundedCornerShape(22.dp),
+    small = RoundedCornerShape(12.dp),
+    medium = RoundedCornerShape(18.dp),
+    large = RoundedCornerShape(24.dp),
   )
 
 @Composable
@@ -72,7 +72,7 @@ fun KasirSembakoTheme(
   darkTheme: Boolean = false,
   content: @Composable () -> Unit,
 ) {
-  val colorScheme = if (darkTheme) WarmDarkColorScheme else WarmLightColorScheme
+  val colorScheme = if (darkTheme) BoutiqueDarkColorScheme else BoutiqueLightColorScheme
 
   MaterialTheme(
     colorScheme = colorScheme,

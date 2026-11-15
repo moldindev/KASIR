@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.ProductEntity
 import com.example.data.SembakoPosRepository
+import com.example.data.ShopPreferencesRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -11,6 +12,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+
+val RUPIAH_BANKNOTES = listOf(1000L, 2000L, 5000L, 10000L, 20000L, 50000L, 100000L)
 
 enum class ScannerMode {
   CHECKOUT,
@@ -56,6 +59,8 @@ data class ReceiptLineItem(
 }
 
 data class CashierUiState(
+  val shopName: String = ShopPreferencesRepository.DEFAULT_SHOP_NAME,
+  val isShopNameDialogOpen: Boolean = false,
   val allProducts: List<ProductEntity> = emptyList(),
   val filteredProducts: List<ProductEntity> = emptyList(),
   val searchQuery: String = "",
@@ -65,10 +70,12 @@ data class CashierUiState(
   val totalItems: Int = 0,
   val isScannerOpen: Boolean = false,
   val scannerMode: ScannerMode = ScannerMode.CHECKOUT,
+  val isSoundMuted: Boolean = false,
   val isPaymentSheetOpen: Boolean = false,
   val productEditorState: ProductEditorState? = null,
   val duplicateBarcodeProductName: String? = null,
-  val cashInputText: String = "",
+  val billCounts: Map<Long, Int> = emptyMap(),
+  val isExactCash: Boolean = false,
   val cashPaid: Long = 0L,
   val changeAmount: Long = 0L,
   val canCompleteSale: Boolean = false,
@@ -82,19 +89,28 @@ private data class CashierDraftState(
   val cartQuantities: Map<Long, Int> = emptyMap(),
   val isScannerOpen: Boolean = false,
   val scannerMode: ScannerMode = ScannerMode.CHECKOUT,
+  val isSoundMuted: Boolean = false,
   val isPaymentSheetOpen: Boolean = false,
+  val isShopNameDialogOpen: Boolean = false,
   val productEditorState: ProductEditorState? = null,
-  val cashInputText: String = "",
+  val billCounts: Map<Long, Int> = emptyMap(),
+  val isExactCash: Boolean = false,
   val isSavingSale: Boolean = false,
   val scanBannerMessage: String? = null,
   val completedReceipt: ReceiptData? = null,
 )
 
-class CashierViewModel(private val repository: SembakoPosRepository) : ViewModel() {
+class CashierViewModel(
+  private val repository: SembakoPosRepository,
+  private val shopPreferences: ShopPreferencesRepository,
+) : ViewModel() {
   private val draftState = MutableStateFlow(CashierDraftState())
 
   val uiState: StateFlow<CashierUiState> =
-    combine(repository.allProducts, draftState) { products, draft ->
+    combine(repository.allProducts, shopPreferences.shopName, draftState) {
+      products,
+      shopName,
+      draft ->
       val productMap = products.associateBy { it.id }
       val validQuantities = draft.cartQuantities.filterKeys { productMap.containsKey(it) }
       val cartItems =
@@ -126,11 +142,19 @@ class CashierViewModel(private val repository: SembakoPosRepository) : ViewModel
 
       val totalAmount = cartItems.sumOf { it.subtotal }
       val totalItems = cartItems.sumOf { it.quantity }
-      val cashPaid = draft.cashInputText.toLongOrNull() ?: 0L
+      val effectiveExactCash = draft.isExactCash && totalAmount > 0L
+      val cashPaid =
+        if (effectiveExactCash) {
+          totalAmount
+        } else {
+          draft.billCounts.entries.sumOf { (denom, count) -> denom * count }
+        }
       val changeAmount = cashPaid - totalAmount
       val canComplete = totalItems > 0 && cashPaid >= totalAmount && !draft.isSavingSale
 
       CashierUiState(
+        shopName = shopName,
+        isShopNameDialogOpen = draft.isShopNameDialogOpen,
         allProducts = products,
         filteredProducts = filtered,
         searchQuery = draft.searchQuery,
@@ -140,10 +164,12 @@ class CashierViewModel(private val repository: SembakoPosRepository) : ViewModel
         totalItems = totalItems,
         isScannerOpen = draft.isScannerOpen,
         scannerMode = draft.scannerMode,
+        isSoundMuted = draft.isSoundMuted,
         isPaymentSheetOpen = draft.isPaymentSheetOpen,
         productEditorState = draft.productEditorState,
         duplicateBarcodeProductName = duplicateProduct?.name,
-        cashInputText = draft.cashInputText,
+        billCounts = if (effectiveExactCash) emptyMap() else draft.billCounts,
+        isExactCash = effectiveExactCash,
         cashPaid = cashPaid,
         changeAmount = changeAmount,
         canCompleteSale = canComplete,
@@ -156,6 +182,19 @@ class CashierViewModel(private val repository: SembakoPosRepository) : ViewModel
       started = SharingStarted.WhileSubscribed(5000),
       initialValue = CashierUiState(),
     )
+
+  fun openShopNameDialog() {
+    draftState.update { it.copy(isShopNameDialogOpen = true) }
+  }
+
+  fun dismissShopNameDialog() {
+    draftState.update { it.copy(isShopNameDialogOpen = false) }
+  }
+
+  fun saveShopName(newName: String) {
+    draftState.update { it.copy(isShopNameDialogOpen = false) }
+    viewModelScope.launch { shopPreferences.updateShopName(newName) }
+  }
 
   fun onSearchQueryChange(query: String) {
     draftState.update { it.copy(searchQuery = query) }
@@ -177,7 +216,11 @@ class CashierViewModel(private val repository: SembakoPosRepository) : ViewModel
         } else {
           state.cartQuantities + (productId to currentQty - 1)
         }
-      state.copy(cartQuantities = updated)
+      val shouldResetExact = updated.isEmpty()
+      state.copy(
+        cartQuantities = updated,
+        isExactCash = if (shouldResetExact) false else state.isExactCash,
+      )
     }
   }
 
@@ -185,7 +228,8 @@ class CashierViewModel(private val repository: SembakoPosRepository) : ViewModel
     draftState.update {
       it.copy(
         cartQuantities = emptyMap(),
-        cashInputText = "",
+        billCounts = emptyMap(),
+        isExactCash = false,
         isPaymentSheetOpen = false,
       )
     }
@@ -213,6 +257,10 @@ class CashierViewModel(private val repository: SembakoPosRepository) : ViewModel
 
   fun closeScanner() {
     draftState.update { it.copy(isScannerOpen = false, scanBannerMessage = null) }
+  }
+
+  fun toggleSoundMute() {
+    draftState.update { it.copy(isSoundMuted = !it.isSoundMuted) }
   }
 
   fun clearScanBanner() {
@@ -407,13 +455,51 @@ class CashierViewModel(private val repository: SembakoPosRepository) : ViewModel
     draftState.update { it.copy(isPaymentSheetOpen = false) }
   }
 
-  fun onCashInputChange(rawDigits: String) {
-    val digitsOnly = rawDigits.filter { it.isDigit() }.take(10)
-    draftState.update { it.copy(cashInputText = digitsOnly) }
+  fun incrementBill(denomination: Long) {
+    if (denomination <= 0L) return
+    draftState.update { state ->
+      val baseCounts = if (state.isExactCash) emptyMap() else state.billCounts
+      val nextCount = (baseCounts[denomination] ?: 0) + 1
+      state.copy(
+        isExactCash = false,
+        billCounts = baseCounts + (denomination to nextCount),
+      )
+    }
   }
 
-  fun setQuickCash(amount: Long) {
-    draftState.update { it.copy(cashInputText = amount.toString()) }
+  fun decrementBill(denomination: Long) {
+    if (denomination <= 0L) return
+    draftState.update { state ->
+      if (state.isExactCash) {
+        return@update state.copy(isExactCash = false, billCounts = emptyMap())
+      }
+      val currentCount = state.billCounts[denomination] ?: 0
+      val updated =
+        if (currentCount <= 1) {
+          state.billCounts - denomination
+        } else {
+          state.billCounts + (denomination to currentCount - 1)
+        }
+      state.copy(billCounts = updated)
+    }
+  }
+
+  fun selectExactCash() {
+    draftState.update {
+      it.copy(
+        isExactCash = true,
+        billCounts = emptyMap(),
+      )
+    }
+  }
+
+  fun resetCash() {
+    draftState.update {
+      it.copy(
+        isExactCash = false,
+        billCounts = emptyMap(),
+      )
+    }
   }
 
   fun completeSale() {
@@ -452,7 +538,8 @@ class CashierViewModel(private val repository: SembakoPosRepository) : ViewModel
       draftState.update {
         it.copy(
           cartQuantities = emptyMap(),
-          cashInputText = "",
+          billCounts = emptyMap(),
+          isExactCash = false,
           isPaymentSheetOpen = false,
           isSavingSale = false,
           completedReceipt = receipt,

@@ -37,6 +37,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.PosDatabase
 import com.example.data.SembakoPosRepository
+import com.example.data.ShopPreferencesRepository
 import com.example.ui.components.BarcodeScannerOverlay
 import com.example.ui.components.CheckoutPaymentSheet
 import com.example.ui.components.ProductEditorSheet
@@ -75,7 +76,8 @@ class MainActivity : ComponentActivity() {
 
     val database = PosDatabase.getInstance(applicationContext)
     val repository = SembakoPosRepository(database.posDao())
-    val factory = PosViewModelFactory(repository)
+    val shopPreferences = ShopPreferencesRepository.fromContext(applicationContext)
+    val factory = PosViewModelFactory(repository, shopPreferences)
 
     setContent {
       KasirSembakoTheme {
@@ -110,7 +112,7 @@ private fun KasirSembakoApp(
         if (!useNavigationRail && !cashierState.isScannerOpen) {
           NavigationBar(
             containerColor = MaterialTheme.colorScheme.surface,
-            tonalElevation = 2.dp,
+            tonalElevation = 1.dp,
           ) {
             PosTab.entries.forEach { tab ->
               val selected = currentTab == tab
@@ -168,9 +170,14 @@ private fun KasirSembakoApp(
               onOpenEditProduct = cashierViewModel::openEditProduct,
               onLoadStarterProducts = cashierViewModel::loadStarterSembakoProducts,
               onOpenPaymentSheet = cashierViewModel::openPaymentSheet,
-              onCashInputChange = cashierViewModel::onCashInputChange,
-              onSelectQuickCash = cashierViewModel::setQuickCash,
+              onIncrementBill = cashierViewModel::incrementBill,
+              onDecrementBill = cashierViewModel::decrementBill,
+              onSelectExactCash = cashierViewModel::selectExactCash,
+              onResetCash = cashierViewModel::resetCash,
               onCompleteSale = cashierViewModel::completeSale,
+              onEditShopNameClick = cashierViewModel::openShopNameDialog,
+              onDismissShopNameDialog = cashierViewModel::dismissShopNameDialog,
+              onSaveShopName = cashierViewModel::saveShopName,
               modifier = Modifier.fillMaxSize(),
             )
           }
@@ -194,6 +201,8 @@ private fun KasirSembakoApp(
         totalItems = cashierState.totalItems,
         totalAmount = cashierState.totalAmount,
         scanBannerMessage = cashierState.scanBannerMessage,
+        isSoundMuted = cashierState.isSoundMuted,
+        onToggleSoundMute = cashierViewModel::toggleSoundMute,
         onBarcodeDetected = cashierViewModel::onBarcodeScanned,
         onClearBanner = cashierViewModel::clearScanBanner,
         onOpenPayment = cashierViewModel::openPaymentSheet,
@@ -207,7 +216,8 @@ private fun KasirSembakoApp(
     CheckoutPaymentSheet(
       cartItems = cashierState.cartItems,
       totalAmount = cashierState.totalAmount,
-      cashInputText = cashierState.cashInputText,
+      billCounts = cashierState.billCounts,
+      isExactCash = cashierState.isExactCash,
       cashPaid = cashierState.cashPaid,
       changeAmount = cashierState.changeAmount,
       canCompleteSale = cashierState.canCompleteSale,
@@ -215,8 +225,10 @@ private fun KasirSembakoApp(
       onIncrementItem = { item -> cashierViewModel.addToCart(item.product) },
       onDecrementItem = cashierViewModel::decrementFromCart,
       onClearCart = cashierViewModel::clearCart,
-      onCashInputChange = cashierViewModel::onCashInputChange,
-      onSelectQuickCash = cashierViewModel::setQuickCash,
+      onIncrementBill = cashierViewModel::incrementBill,
+      onDecrementBill = cashierViewModel::decrementBill,
+      onSelectExactCash = cashierViewModel::selectExactCash,
+      onResetCash = cashierViewModel::resetCash,
       onCompleteSale = cashierViewModel::completeSale,
       onDismiss = cashierViewModel::dismissPaymentSheet,
     )
@@ -243,6 +255,7 @@ private fun KasirSembakoApp(
   // Post-Checkout Receipt Confirmation
   cashierState.completedReceipt?.let { receipt ->
     ReceiptDialog(
+      shopName = cashierState.shopName,
       receipt = receipt,
       onDismiss = cashierViewModel::dismissCompletedReceipt,
     )
@@ -251,6 +264,7 @@ private fun KasirSembakoApp(
   // History Receipt Detail
   historyState.selectedReceipt?.let { receipt ->
     ReceiptDialog(
+      shopName = cashierState.shopName,
       receipt = receipt,
       onDismiss = historyViewModel::dismissReceipt,
     )

@@ -41,10 +41,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.data.TransactionWithItems
-import com.example.ui.theme.ForestPrimary
-import com.example.ui.theme.ForestPrimaryDark
 import com.example.ui.theme.PriceTextMedium
 import com.example.ui.theme.PriceTextSmall
+import com.example.ui.theme.SagePrimary
+import com.example.ui.theme.SagePrimaryDark
 import com.example.ui.viewmodel.HistoryUiState
 import com.example.util.DateFilter
 import com.example.util.formatFullDateTime
@@ -148,7 +148,7 @@ private fun RevenueSummaryCard(
         .clip(MaterialTheme.shapes.large)
         .background(
           Brush.linearGradient(
-            colors = listOf(ForestPrimary, ForestPrimaryDark)
+            colors = listOf(SagePrimary, SagePrimaryDark)
           )
         )
         .padding(20.dp),

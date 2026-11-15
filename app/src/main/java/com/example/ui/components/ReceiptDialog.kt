@@ -32,6 +32,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.R
 import com.example.ui.theme.PriceTextLarge
@@ -43,6 +44,7 @@ import com.example.util.formatRupiah
 
 @Composable
 fun ReceiptDialog(
+  shopName: String,
   receipt: ReceiptData,
   onDismiss: () -> Unit,
 ) {
@@ -54,9 +56,18 @@ fun ReceiptDialog(
       modifier = Modifier.fillMaxWidth(),
     ) {
       Column(
-        modifier = Modifier.padding(20.dp),
+        modifier = Modifier.padding(22.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
       ) {
+        Text(
+          text = shopName.uppercase(),
+          style = MaterialTheme.typography.labelLarge,
+          letterSpacing = 1.2.sp,
+          color = MaterialTheme.colorScheme.primary,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
+
         Row(
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -151,7 +162,7 @@ fun ReceiptDialog(
 
         Button(
           onClick = onDismiss,
-          modifier = Modifier.fillMaxWidth().height(48.dp).testTag("receipt_done_button"),
+          modifier = Modifier.fillMaxWidth().height(50.dp).testTag("receipt_done_button"),
           shape = MaterialTheme.shapes.small,
         ) {
           Text(

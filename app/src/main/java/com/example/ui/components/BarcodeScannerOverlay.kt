@@ -39,6 +39,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.FlashOff
@@ -85,6 +87,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.R
 import com.example.ui.theme.PriceTextMedium
 import com.example.ui.viewmodel.ScannerMode
+import com.example.util.BarcodeSoundPlayer
 import com.example.util.BarcodeStabilizer
 import com.example.util.formatRupiah
 import com.google.mlkit.vision.barcode.BarcodeScannerOptions
@@ -103,6 +106,8 @@ fun BarcodeScannerOverlay(
   totalItems: Int,
   totalAmount: Long,
   scanBannerMessage: String?,
+  isSoundMuted: Boolean,
+  onToggleSoundMute: () -> Unit,
   onBarcodeDetected: (String) -> Unit,
   onClearBanner: () -> Unit,
   onOpenPayment: () -> Unit,
@@ -151,6 +156,8 @@ fun BarcodeScannerOverlay(
         totalItems = totalItems,
         totalAmount = totalAmount,
         scanBannerMessage = scanBannerMessage,
+        isSoundMuted = isSoundMuted,
+        onToggleSoundMute = onToggleSoundMute,
         onBarcodeDetected = onBarcodeDetected,
         onOpenPayment = onOpenPayment,
         onClose = onClose,
@@ -230,14 +237,20 @@ private fun ScannerCameraContent(
   totalItems: Int,
   totalAmount: Long,
   scanBannerMessage: String?,
+  isSoundMuted: Boolean,
+  onToggleSoundMute: () -> Unit,
   onBarcodeDetected: (String) -> Unit,
   onOpenPayment: () -> Unit,
   onClose: () -> Unit,
 ) {
+  val context = LocalContext.current
   val lifecycleOwner = LocalLifecycleOwner.current
   val haptic = LocalHapticFeedback.current
   val currentMode by rememberUpdatedState(scannerMode)
+  val currentIsMuted by rememberUpdatedState(isSoundMuted)
   val currentOnBarcodeDetected by rememberUpdatedState(onBarcodeDetected)
+
+  val soundPlayer = remember(context) { BarcodeSoundPlayer(context) }
 
   var torchEnabled by remember { mutableStateOf(false) }
   var boundCamera by remember { mutableStateOf<Camera?>(null) }
@@ -257,7 +270,6 @@ private fun ScannerCameraContent(
 
   val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
   val scanner = remember {
-    // Limit to retail/grocery barcode formats so stray 1D bars aren't misread as ITF/Codabar/Code39
     val options =
       BarcodeScannerOptions.Builder()
         .setBarcodeFormats(
@@ -279,6 +291,7 @@ private fun ScannerCameraContent(
       cameraProviderRef?.unbindAll()
       stabilizer.reset()
       scanner.close()
+      soundPlayer.release()
       cameraExecutor.shutdown()
     }
   }
@@ -383,10 +396,12 @@ private fun ScannerCameraContent(
                               if (currentMode == ScannerMode.PICK_FOR_PRODUCT) {
                                 if (hasPickedSingleCode.compareAndSet(false, true)) {
                                   haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                  if (!currentIsMuted) soundPlayer.playBeep()
                                   currentOnBarcodeDetected(confirmed)
                                 }
                               } else {
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                if (!currentIsMuted) soundPlayer.playBeep()
                                 currentOnBarcodeDetected(confirmed)
                               }
                             }
@@ -411,7 +426,6 @@ private fun ScannerCameraContent(
                   analysis,
                 )
               boundCamera = camera
-              // Trigger initial center autofocus for crisp 1D barcode edges
               previewView.post {
                 val centerPoint =
                   previewView.meteringPointFactory.createPoint(
@@ -451,7 +465,7 @@ private fun ScannerCameraContent(
       )
 
       drawRoundRect(
-        color = Color(0xFFFAF7F2),
+        color = Color(0xFFFAF9F6),
         topLeft = Offset(left, top),
         size = Size(boxWidth, boxHeight),
         cornerRadius = CornerRadius(18.dp.toPx(), 18.dp.toPx()),
@@ -499,7 +513,7 @@ private fun ScannerCameraContent(
           )
           Text(
             text =
-              if (scannerMode == ScannerMode.PICK_FOR_PRODUCT) "Scan Kode Batang Barang"
+              if (scannerMode == ScannerMode.PICK_FOR_PRODUCT) "Scan Kode Batang"
               else "Scan untuk Kasir",
             style = MaterialTheme.typography.labelLarge,
             color = Color.White,
@@ -507,18 +521,37 @@ private fun ScannerCameraContent(
         }
       }
 
-      IconButton(
-        onClick = { torchEnabled = !torchEnabled },
-        modifier =
-          Modifier.size(48.dp)
-            .background(Color.Black.copy(alpha = 0.5f), CircleShape)
-            .testTag("scanner_torch_button"),
-      ) {
-        Icon(
-          imageVector = if (torchEnabled) Icons.Filled.FlashOn else Icons.Filled.FlashOff,
-          contentDescription = "Lampu kilat",
-          tint = if (torchEnabled) Color(0xFFFFD54F) else Color.White,
-        )
+      Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        IconButton(
+          onClick = onToggleSoundMute,
+          modifier =
+            Modifier.size(48.dp)
+              .background(Color.Black.copy(alpha = 0.5f), CircleShape)
+              .testTag("scanner_mute_button"),
+        ) {
+          Icon(
+            imageVector =
+              if (isSoundMuted) Icons.AutoMirrored.Filled.VolumeOff
+              else Icons.AutoMirrored.Filled.VolumeUp,
+            contentDescription =
+              if (isSoundMuted) "Nyalakan suara scan" else "Matikan suara scan",
+            tint = if (isSoundMuted) Color(0xFFB8C0B9) else Color.White,
+          )
+        }
+
+        IconButton(
+          onClick = { torchEnabled = !torchEnabled },
+          modifier =
+            Modifier.size(48.dp)
+              .background(Color.Black.copy(alpha = 0.5f), CircleShape)
+              .testTag("scanner_torch_button"),
+        ) {
+          Icon(
+            imageVector = if (torchEnabled) Icons.Filled.FlashOn else Icons.Filled.FlashOff,
+            contentDescription = "Lampu kilat",
+            tint = if (torchEnabled) Color(0xFFFFD54F) else Color.White,
+          )
+        }
       }
     }
 
@@ -647,7 +680,6 @@ private fun selectCenterBarcode(
   val centerX = frameWidth / 2f
   val centerY = frameHeight / 2f
 
-  // Strictly ignore barcodes clipped at frame edges or outside the center aiming region
   val centeredCandidates =
     barcodes.filter { barcode ->
       val box = barcode.boundingBox ?: return@filter false
