@@ -141,4 +141,103 @@ class ExampleRobolectricTest {
 
     collectJob.cancel()
   }
+
+  @Test
+  fun `barcode stabilizer rejects single-frame misread and confirms consistent barcode`() {
+    val stabilizer =
+      com.example.util.BarcodeStabilizer(
+        requiredConsecutiveMatches = 3,
+        matchWindowMillis = 900L,
+        cooldownMillis = 1800L,
+      )
+
+    // Corrupted check digit on EAN-13 must be rejected
+    assertNull(
+      stabilizer.onFrameDetected(
+        rawValue = "8992761139019",
+        format = com.google.mlkit.vision.barcode.common.Barcode.FORMAT_EAN_13,
+        nowMillis = 100L,
+      )
+    )
+
+    // Single glitchy frame (even if valid check digit) should not trigger confirmation
+    assertNull(
+      stabilizer.onFrameDetected(
+        rawValue = "8992761139025",
+        format = com.google.mlkit.vision.barcode.common.Barcode.FORMAT_EAN_13,
+        nowMillis = 150L,
+      )
+    )
+
+    // 3 consecutive consistent frames confirm the real barcode
+    assertNull(
+      stabilizer.onFrameDetected(
+        rawValue = "8992761139018",
+        format = com.google.mlkit.vision.barcode.common.Barcode.FORMAT_EAN_13,
+        nowMillis = 200L,
+      )
+    )
+    assertNull(
+      stabilizer.onFrameDetected(
+        rawValue = "8992761139018",
+        format = com.google.mlkit.vision.barcode.common.Barcode.FORMAT_EAN_13,
+        nowMillis = 250L,
+      )
+    )
+    assertEquals(
+      "8992761139018",
+      stabilizer.onFrameDetected(
+        rawValue = "8992761139018",
+        format = com.google.mlkit.vision.barcode.common.Barcode.FORMAT_EAN_13,
+        nowMillis = 300L,
+      ),
+    )
+
+    // Within cooldown window, same barcode does not double-fire
+    assertNull(
+      stabilizer.onFrameDetected(
+        rawValue = "8992761139018",
+        format = com.google.mlkit.vision.barcode.common.Barcode.FORMAT_EAN_13,
+        nowMillis = 800L,
+      )
+    )
+  }
+
+  @Test
+  fun `upc-a and ean-13 leading zero variants normalize and resolve to same product`() = runTest {
+    val stabilizer =
+      com.example.util.BarcodeStabilizer(
+        requiredConsecutiveMatches = 2,
+        matchWindowMillis = 900L,
+        cooldownMillis = 1500L,
+      )
+
+    // Same physical barcode decoded once as 12-digit UPC-A and once as 13-digit EAN-13
+    assertNull(
+      stabilizer.onFrameDetected(
+        rawValue = "036000291452\n",
+        format = com.google.mlkit.vision.barcode.common.Barcode.FORMAT_UPC_A,
+        nowMillis = 100L,
+      )
+    )
+    val confirmedUpcAsEan13 =
+      stabilizer.onFrameDetected(
+        rawValue = "0036000291452",
+        format = com.google.mlkit.vision.barcode.common.Barcode.FORMAT_EAN_13,
+        nowMillis = 150L,
+      )
+    assertEquals("0036000291452", confirmedUpcAsEan13)
+
+    // Even if product was saved as 12-digit UPC-A, lookup with 13-digit EAN-13 finds it
+    val savedId =
+      repository.saveProduct(
+        name = "Tisu Kemasan",
+        price = 12000L,
+        unit = "pcs",
+        barcode = "036000291452",
+      )
+    val foundFromEan13 = repository.findProductByBarcode("0036000291452")
+    assertNotNull(foundFromEan13)
+    assertEquals(savedId, foundFromEan13?.id)
+  }
 }

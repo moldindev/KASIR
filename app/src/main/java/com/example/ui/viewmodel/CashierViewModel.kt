@@ -219,15 +219,22 @@ class CashierViewModel(private val repository: SembakoPosRepository) : ViewModel
     draftState.update { it.copy(scanBannerMessage = null) }
   }
 
+  private var isLookingUpBarcode = false
+
   fun onBarcodeScanned(rawCode: String) {
-    val code = rawCode.trim()
+    val code = rawCode.filter { it.code in 33..126 }.trim()
     if (code.isEmpty()) return
 
-    val currentMode = draftState.value.scannerMode
-    if (currentMode == ScannerMode.PICK_FOR_PRODUCT) {
+    val snapshot = draftState.value
+    if (!snapshot.isScannerOpen) return
+
+    if (snapshot.scannerMode == ScannerMode.PICK_FOR_PRODUCT) {
       draftState.update { state ->
-        val updatedEditor = state.productEditorState?.copy(barcode = code)
-          ?: ProductEditorState(barcode = code)
+        if (!state.isScannerOpen || state.scannerMode != ScannerMode.PICK_FOR_PRODUCT) {
+          return@update state
+        }
+        val updatedEditor =
+          state.productEditorState?.copy(barcode = code) ?: ProductEditorState(barcode = code)
         state.copy(
           isScannerOpen = false,
           scanBannerMessage = null,
@@ -237,31 +244,39 @@ class CashierViewModel(private val repository: SembakoPosRepository) : ViewModel
       return
     }
 
+    if (isLookingUpBarcode) return
+    isLookingUpBarcode = true
+
     viewModelScope.launch {
-      val existing = repository.findProductByBarcode(code)
-      if (existing != null) {
-        draftState.update { state ->
-          val currentQty = state.cartQuantities[existing.id] ?: 0
-          val nextQty = currentQty + 1
-          state.copy(
-            cartQuantities = state.cartQuantities + (existing.id to nextQty),
-            scanBannerMessage = "Ditambahkan: ${existing.name} (×$nextQty)",
-          )
+      try {
+        val existing = repository.findProductByBarcode(code)
+        if (!draftState.value.isScannerOpen) return@launch
+        if (existing != null) {
+          draftState.update { state ->
+            val currentQty = state.cartQuantities[existing.id] ?: 0
+            val nextQty = currentQty + 1
+            state.copy(
+              cartQuantities = state.cartQuantities + (existing.id to nextQty),
+              scanBannerMessage = "Ditambahkan: ${existing.name} (×$nextQty)",
+            )
+          }
+        } else {
+          draftState.update { state ->
+            state.copy(
+              isScannerOpen = false,
+              scanBannerMessage = null,
+              productEditorState =
+                ProductEditorState(
+                  existingId = null,
+                  barcode = code,
+                  isFromUnknownCheckoutScan = true,
+                  addToCartOnSave = true,
+                ),
+            )
+          }
         }
-      } else {
-        draftState.update { state ->
-          state.copy(
-            isScannerOpen = false,
-            scanBannerMessage = null,
-            productEditorState =
-              ProductEditorState(
-                existingId = null,
-                barcode = code,
-                isFromUnknownCheckoutScan = true,
-                addToCartOnSave = true,
-              ),
-          )
-        }
+      } finally {
+        isLookingUpBarcode = false
       }
     }
   }

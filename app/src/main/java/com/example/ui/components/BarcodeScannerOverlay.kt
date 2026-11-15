@@ -2,6 +2,7 @@ package com.example.ui.components
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.util.Size as AndroidSize
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -9,8 +10,12 @@ import androidx.annotation.OptIn
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ExperimentalGetImage
+import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
+import androidx.camera.core.resolutionselector.AspectRatioStrategy
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.animation.AnimatedVisibility
@@ -18,6 +23,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -52,7 +58,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -66,6 +71,7 @@ import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
@@ -79,12 +85,16 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.R
 import com.example.ui.theme.PriceTextMedium
 import com.example.ui.viewmodel.ScannerMode
+import com.example.util.BarcodeStabilizer
 import com.example.util.formatRupiah
 import com.google.mlkit.vision.barcode.BarcodeScannerOptions
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.hypot
 import kotlinx.coroutines.delay
 
 @Composable
@@ -231,21 +241,43 @@ private fun ScannerCameraContent(
 
   var torchEnabled by remember { mutableStateOf(false) }
   var boundCamera by remember { mutableStateOf<Camera?>(null) }
-  var lastCode by remember { mutableStateOf("") }
-  var lastDetectedAt by remember { mutableLongStateOf(0L) }
-  var hasPickedSingleCode by remember { mutableStateOf(false) }
+  var previewViewRef by remember { mutableStateOf<PreviewView?>(null) }
+  var cameraProviderRef by remember { mutableStateOf<ProcessCameraProvider?>(null) }
+  var imageAnalysisRef by remember { mutableStateOf<ImageAnalysis?>(null) }
+  val isDisposed = remember { AtomicBoolean(false) }
+  val hasPickedSingleCode = remember { AtomicBoolean(false) }
+
+  val stabilizer = remember {
+    BarcodeStabilizer(
+      requiredConsecutiveMatches = 3,
+      matchWindowMillis = 900L,
+      cooldownMillis = 2000L,
+    )
+  }
 
   val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
   val scanner = remember {
+    // Limit to retail/grocery barcode formats so stray 1D bars aren't misread as ITF/Codabar/Code39
     val options =
       BarcodeScannerOptions.Builder()
-        .setBarcodeFormats(Barcode.FORMAT_ALL_FORMATS)
+        .setBarcodeFormats(
+          Barcode.FORMAT_EAN_13,
+          Barcode.FORMAT_EAN_8,
+          Barcode.FORMAT_UPC_A,
+          Barcode.FORMAT_UPC_E,
+          Barcode.FORMAT_CODE_128,
+          Barcode.FORMAT_QR_CODE,
+        )
         .build()
     BarcodeScanning.getClient(options)
   }
 
   DisposableEffect(Unit) {
     onDispose {
+      isDisposed.set(true)
+      imageAnalysisRef?.clearAnalyzer()
+      cameraProviderRef?.unbindAll()
+      stabilizer.reset()
       scanner.close()
       cameraExecutor.shutdown()
     }
@@ -255,51 +287,107 @@ private fun ScannerCameraContent(
     boundCamera?.cameraControl?.enableTorch(torchEnabled)
   }
 
+  LaunchedEffect(boundCamera, previewViewRef) {
+    val camera = boundCamera ?: return@LaunchedEffect
+    val view = previewViewRef ?: return@LaunchedEffect
+    while (!isDisposed.get()) {
+      delay(2500L)
+      if (view.width > 0 && view.height > 0) {
+        val centerPoint = view.meteringPointFactory.createPoint(view.width / 2f, view.height / 2f)
+        val focusAction =
+          FocusMeteringAction.Builder(centerPoint, FocusMeteringAction.FLAG_AF)
+            .setAutoCancelDuration(3, TimeUnit.SECONDS)
+            .build()
+        camera.cameraControl.startFocusAndMetering(focusAction)
+      }
+    }
+  }
+
   Box(modifier = Modifier.fillMaxSize()) {
     AndroidView(
-      modifier = Modifier.fillMaxSize(),
+      modifier =
+        Modifier.fillMaxSize().pointerInput(boundCamera, previewViewRef) {
+          detectTapGestures { offset ->
+            val camera = boundCamera ?: return@detectTapGestures
+            val view = previewViewRef ?: return@detectTapGestures
+            val point = view.meteringPointFactory.createPoint(offset.x, offset.y)
+            val action =
+              FocusMeteringAction.Builder(point, FocusMeteringAction.FLAG_AF)
+                .setAutoCancelDuration(3, TimeUnit.SECONDS)
+                .build()
+            camera.cameraControl.startFocusAndMetering(action)
+          }
+        },
       factory = { viewContext ->
-        val previewView = PreviewView(viewContext)
+        val previewView =
+          PreviewView(viewContext).apply {
+            scaleType = PreviewView.ScaleType.FILL_CENTER
+          }
+        previewViewRef = previewView
+
         val cameraProviderFuture = ProcessCameraProvider.getInstance(viewContext)
         cameraProviderFuture.addListener(
           {
             val cameraProvider = cameraProviderFuture.get()
+            val resolutionSelector =
+              ResolutionSelector.Builder()
+                .setAspectRatioStrategy(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY)
+                .setResolutionStrategy(
+                  ResolutionStrategy(
+                    AndroidSize(1280, 720),
+                    ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER,
+                  )
+                )
+                .build()
+
             val preview =
-              Preview.Builder().build().also {
-                it.surfaceProvider = previewView.surfaceProvider
-              }
+              Preview.Builder()
+                .setResolutionSelector(resolutionSelector)
+                .build()
+                .also { it.surfaceProvider = previewView.surfaceProvider }
 
             val analysis =
               ImageAnalysis.Builder()
+                .setResolutionSelector(resolutionSelector)
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 .build()
                 .also { imageAnalysis ->
+                  imageAnalysisRef = imageAnalysis
                   imageAnalysis.setAnalyzer(cameraExecutor) { imageProxy ->
+                    if (isDisposed.get()) {
+                      imageProxy.close()
+                      return@setAnalyzer
+                    }
                     val mediaImage = imageProxy.image
                     if (mediaImage != null) {
-                      val inputImage =
-                        InputImage.fromMediaImage(
-                          mediaImage,
-                          imageProxy.imageInfo.rotationDegrees,
-                        )
+                      val rotation = imageProxy.imageInfo.rotationDegrees
+                      val inputImage = InputImage.fromMediaImage(mediaImage, rotation)
+                      val frameWidth =
+                        if (rotation == 90 || rotation == 270) imageProxy.height else imageProxy.width
+                      val frameHeight =
+                        if (rotation == 90 || rotation == 270) imageProxy.width else imageProxy.height
+
                       scanner
                         .process(inputImage)
                         .addOnSuccessListener { barcodes ->
-                          val value = barcodes.firstOrNull()?.rawValue?.trim()
-                          if (!value.isNullOrEmpty()) {
-                            if (currentMode == ScannerMode.PICK_FOR_PRODUCT) {
-                              if (!hasPickedSingleCode) {
-                                hasPickedSingleCode = true
+                          if (isDisposed.get()) return@addOnSuccessListener
+                          val bestBarcode = selectCenterBarcode(barcodes, frameWidth, frameHeight)
+                          val rawValue = bestBarcode?.rawValue ?: bestBarcode?.displayValue
+                          if (bestBarcode != null && !rawValue.isNullOrBlank()) {
+                            val confirmed =
+                              stabilizer.onFrameDetected(
+                                rawValue = rawValue,
+                                format = bestBarcode.format,
+                              )
+                            if (confirmed != null) {
+                              if (currentMode == ScannerMode.PICK_FOR_PRODUCT) {
+                                if (hasPickedSingleCode.compareAndSet(false, true)) {
+                                  haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                  currentOnBarcodeDetected(confirmed)
+                                }
+                              } else {
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                currentOnBarcodeDetected(value)
-                              }
-                            } else {
-                              val now = System.currentTimeMillis()
-                              if (value != lastCode || (now - lastDetectedAt) > 1500L) {
-                                lastCode = value
-                                lastDetectedAt = now
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                currentOnBarcodeDetected(value)
+                                currentOnBarcodeDetected(confirmed)
                               }
                             }
                           }
@@ -312,14 +400,30 @@ private fun ScannerCameraContent(
                 }
 
             try {
+              if (isDisposed.get()) return@addListener
+              cameraProviderRef = cameraProvider
               cameraProvider.unbindAll()
-              boundCamera =
+              val camera =
                 cameraProvider.bindToLifecycle(
                   lifecycleOwner,
                   CameraSelector.DEFAULT_BACK_CAMERA,
                   preview,
                   analysis,
                 )
+              boundCamera = camera
+              // Trigger initial center autofocus for crisp 1D barcode edges
+              previewView.post {
+                val centerPoint =
+                  previewView.meteringPointFactory.createPoint(
+                    previewView.width / 2f,
+                    previewView.height / 2f,
+                  )
+                val focusAction =
+                  FocusMeteringAction.Builder(centerPoint, FocusMeteringAction.FLAG_AF)
+                    .setAutoCancelDuration(4, TimeUnit.SECONDS)
+                    .build()
+                camera.cameraControl.startFocusAndMetering(focusAction)
+              }
             } catch (_: Exception) {
               // Camera unavailable on device/emulator
             }
@@ -468,7 +572,7 @@ private fun ScannerCameraContent(
           horizontalArrangement = Arrangement.SpaceBetween,
         ) {
           Text(
-            text = "Arahkan kamera ke kode batang kemasan untuk diisi otomatis.",
+            text = "Arahkan kode batang ke kotak tengah (ketuk layar untuk fokus).",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.weight(1f).padding(end = 12.dp),
@@ -531,5 +635,33 @@ private fun ScannerCameraContent(
         }
       }
     }
+  }
+}
+
+private fun selectCenterBarcode(
+  barcodes: List<Barcode>,
+  frameWidth: Int,
+  frameHeight: Int,
+): Barcode? {
+  if (barcodes.isEmpty() || frameWidth <= 0 || frameHeight <= 0) return null
+  val centerX = frameWidth / 2f
+  val centerY = frameHeight / 2f
+
+  // Strictly ignore barcodes clipped at frame edges or outside the center aiming region
+  val centeredCandidates =
+    barcodes.filter { barcode ->
+      val box = barcode.boundingBox ?: return@filter false
+      val bx = box.exactCenterX()
+      val by = box.exactCenterY()
+      val notClipped = box.left > frameWidth * 0.03f && box.right < frameWidth * 0.97f
+      val inAimArea =
+        bx in (frameWidth * 0.12f)..(frameWidth * 0.88f) &&
+          by in (frameHeight * 0.18f)..(frameHeight * 0.82f)
+      notClipped && inAimArea
+    }
+
+  return centeredCandidates.minByOrNull { barcode ->
+    val box = barcode.boundingBox ?: return@minByOrNull Float.MAX_VALUE
+    hypot(box.exactCenterX() - centerX, box.exactCenterY() - centerY)
   }
 }

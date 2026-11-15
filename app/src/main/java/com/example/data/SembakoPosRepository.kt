@@ -14,9 +14,18 @@ class SembakoPosRepository(private val dao: PosDao) {
   }
 
   suspend fun findProductByBarcode(barcode: String): ProductEntity? {
-    val normalized = barcode.trim()
+    val normalized = barcode.filter { it.code in 33..126 }.trim()
     if (normalized.isEmpty()) return null
-    return dao.findProductByBarcode(normalized)
+    dao.findProductByBarcode(normalized)?.let { return it }
+
+    if (normalized.all { it.isDigit() }) {
+      if (normalized.length == 12) {
+        dao.findProductByBarcode("0$normalized")?.let { return it }
+      } else if (normalized.length == 13 && normalized.startsWith("0")) {
+        dao.findProductByBarcode(normalized.drop(1))?.let { return it }
+      }
+    }
+    return null
   }
 
   suspend fun saveProduct(
