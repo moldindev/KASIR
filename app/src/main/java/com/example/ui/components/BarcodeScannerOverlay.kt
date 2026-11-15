@@ -21,13 +21,19 @@ import androidx.camera.view.PreviewView
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -35,27 +41,37 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.outlined.ShoppingBasket
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -66,6 +82,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -78,14 +95,21 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.R
+import com.example.ui.theme.PriceTextLarge
 import com.example.ui.theme.PriceTextMedium
+import com.example.ui.theme.PriceTextSmall
+import com.example.ui.viewmodel.CartLineItem
 import com.example.ui.viewmodel.ScannerMode
 import com.example.util.BarcodeSoundPlayer
 import com.example.util.BarcodeStabilizer
@@ -98,16 +122,21 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.hypot
+import kotlin.math.min
 import kotlinx.coroutines.delay
 
 @Composable
 fun BarcodeScannerOverlay(
   scannerMode: ScannerMode,
+  cartItems: List<CartLineItem>,
   totalItems: Int,
   totalAmount: Long,
   scanBannerMessage: String?,
   isSoundMuted: Boolean,
   onToggleSoundMute: () -> Unit,
+  onIncrementItem: (CartLineItem) -> Unit,
+  onDecrementItem: (Long) -> Unit,
+  onClearCart: () -> Unit,
   onBarcodeDetected: (String) -> Unit,
   onClearBanner: () -> Unit,
   onOpenPayment: () -> Unit,
@@ -153,11 +182,15 @@ fun BarcodeScannerOverlay(
     } else {
       ScannerCameraContent(
         scannerMode = scannerMode,
+        cartItems = cartItems,
         totalItems = totalItems,
         totalAmount = totalAmount,
         scanBannerMessage = scanBannerMessage,
         isSoundMuted = isSoundMuted,
         onToggleSoundMute = onToggleSoundMute,
+        onIncrementItem = onIncrementItem,
+        onDecrementItem = onDecrementItem,
+        onClearCart = onClearCart,
         onBarcodeDetected = onBarcodeDetected,
         onOpenPayment = onOpenPayment,
         onClose = onClose,
@@ -234,11 +267,15 @@ private fun CameraPermissionContent(
 @Composable
 private fun ScannerCameraContent(
   scannerMode: ScannerMode,
+  cartItems: List<CartLineItem>,
   totalItems: Int,
   totalAmount: Long,
   scanBannerMessage: String?,
   isSoundMuted: Boolean,
   onToggleSoundMute: () -> Unit,
+  onIncrementItem: (CartLineItem) -> Unit,
+  onDecrementItem: (Long) -> Unit,
+  onClearCart: () -> Unit,
   onBarcodeDetected: (String) -> Unit,
   onOpenPayment: () -> Unit,
   onClose: () -> Unit,
@@ -316,354 +353,633 @@ private fun ScannerCameraContent(
     }
   }
 
-  Box(modifier = Modifier.fillMaxSize()) {
-    AndroidView(
+  val isCheckoutSplit = scannerMode == ScannerMode.CHECKOUT
+
+  Column(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+    // Top Camera Pane (42% height in Checkout Split mode, full screen in Pick mode)
+    Box(
       modifier =
-        Modifier.fillMaxSize().pointerInput(boundCamera, previewViewRef) {
-          detectTapGestures { offset ->
-            val camera = boundCamera ?: return@detectTapGestures
-            val view = previewViewRef ?: return@detectTapGestures
-            val point = view.meteringPointFactory.createPoint(offset.x, offset.y)
-            val action =
-              FocusMeteringAction.Builder(point, FocusMeteringAction.FLAG_AF)
-                .setAutoCancelDuration(3, TimeUnit.SECONDS)
-                .build()
-            camera.cameraControl.startFocusAndMetering(action)
-          }
-        },
-      factory = { viewContext ->
-        val previewView =
-          PreviewView(viewContext).apply {
-            scaleType = PreviewView.ScaleType.FILL_CENTER
-          }
-        previewViewRef = previewView
+        Modifier.fillMaxWidth()
+          .then(if (isCheckoutSplit) Modifier.weight(0.42f) else Modifier.weight(1f))
+    ) {
+      AndroidView(
+        modifier =
+          Modifier.fillMaxSize().pointerInput(boundCamera, previewViewRef) {
+            detectTapGestures { offset ->
+              val camera = boundCamera ?: return@detectTapGestures
+              val view = previewViewRef ?: return@detectTapGestures
+              val point = view.meteringPointFactory.createPoint(offset.x, offset.y)
+              val action =
+                FocusMeteringAction.Builder(point, FocusMeteringAction.FLAG_AF)
+                  .setAutoCancelDuration(3, TimeUnit.SECONDS)
+                  .build()
+              camera.cameraControl.startFocusAndMetering(action)
+            }
+          },
+        factory = { viewContext ->
+          val previewView =
+            PreviewView(viewContext).apply {
+              scaleType = PreviewView.ScaleType.FILL_CENTER
+            }
+          previewViewRef = previewView
 
-        val cameraProviderFuture = ProcessCameraProvider.getInstance(viewContext)
-        cameraProviderFuture.addListener(
-          {
-            val cameraProvider = cameraProviderFuture.get()
-            val resolutionSelector =
-              ResolutionSelector.Builder()
-                .setAspectRatioStrategy(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY)
-                .setResolutionStrategy(
-                  ResolutionStrategy(
-                    AndroidSize(1280, 720),
-                    ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER,
+          val cameraProviderFuture = ProcessCameraProvider.getInstance(viewContext)
+          cameraProviderFuture.addListener(
+            {
+              val cameraProvider = cameraProviderFuture.get()
+              val resolutionSelector =
+                ResolutionSelector.Builder()
+                  .setAspectRatioStrategy(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY)
+                  .setResolutionStrategy(
+                    ResolutionStrategy(
+                      AndroidSize(1280, 720),
+                      ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER,
+                    )
                   )
-                )
-                .build()
+                  .build()
 
-            val preview =
-              Preview.Builder()
-                .setResolutionSelector(resolutionSelector)
-                .build()
-                .also { it.surfaceProvider = previewView.surfaceProvider }
+              val preview =
+                Preview.Builder()
+                  .setResolutionSelector(resolutionSelector)
+                  .build()
+                  .also { it.surfaceProvider = previewView.surfaceProvider }
 
-            val analysis =
-              ImageAnalysis.Builder()
-                .setResolutionSelector(resolutionSelector)
-                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                .build()
-                .also { imageAnalysis ->
-                  imageAnalysisRef = imageAnalysis
-                  imageAnalysis.setAnalyzer(cameraExecutor) { imageProxy ->
-                    if (isDisposed.get()) {
-                      imageProxy.close()
-                      return@setAnalyzer
-                    }
-                    val mediaImage = imageProxy.image
-                    if (mediaImage != null) {
-                      val rotation = imageProxy.imageInfo.rotationDegrees
-                      val inputImage = InputImage.fromMediaImage(mediaImage, rotation)
-                      val frameWidth =
-                        if (rotation == 90 || rotation == 270) imageProxy.height else imageProxy.width
-                      val frameHeight =
-                        if (rotation == 90 || rotation == 270) imageProxy.width else imageProxy.height
+              val analysis =
+                ImageAnalysis.Builder()
+                  .setResolutionSelector(resolutionSelector)
+                  .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                  .build()
+                  .also { imageAnalysis ->
+                    imageAnalysisRef = imageAnalysis
+                    imageAnalysis.setAnalyzer(cameraExecutor) { imageProxy ->
+                      if (isDisposed.get()) {
+                        imageProxy.close()
+                        return@setAnalyzer
+                      }
+                      val mediaImage = imageProxy.image
+                      if (mediaImage != null) {
+                        val rotation = imageProxy.imageInfo.rotationDegrees
+                        val inputImage = InputImage.fromMediaImage(mediaImage, rotation)
+                        val frameWidth =
+                          if (rotation == 90 || rotation == 270) imageProxy.height else imageProxy.width
+                        val frameHeight =
+                          if (rotation == 90 || rotation == 270) imageProxy.width else imageProxy.height
 
-                      scanner
-                        .process(inputImage)
-                        .addOnSuccessListener { barcodes ->
-                          if (isDisposed.get()) return@addOnSuccessListener
-                          val bestBarcode = selectCenterBarcode(barcodes, frameWidth, frameHeight)
-                          val rawValue = bestBarcode?.rawValue ?: bestBarcode?.displayValue
-                          if (bestBarcode != null && !rawValue.isNullOrBlank()) {
-                            val confirmed =
-                              stabilizer.onFrameDetected(
-                                rawValue = rawValue,
-                                format = bestBarcode.format,
-                              )
-                            if (confirmed != null) {
-                              if (currentMode == ScannerMode.PICK_FOR_PRODUCT) {
-                                if (hasPickedSingleCode.compareAndSet(false, true)) {
+                        scanner
+                          .process(inputImage)
+                          .addOnSuccessListener { barcodes ->
+                            if (isDisposed.get()) return@addOnSuccessListener
+                            val bestBarcode = selectCenterBarcode(barcodes, frameWidth, frameHeight)
+                            val rawValue = bestBarcode?.rawValue ?: bestBarcode?.displayValue
+                            if (bestBarcode != null && !rawValue.isNullOrBlank()) {
+                              val confirmed =
+                                stabilizer.onFrameDetected(
+                                  rawValue = rawValue,
+                                  format = bestBarcode.format,
+                                )
+                              if (confirmed != null) {
+                                if (currentMode == ScannerMode.PICK_FOR_PRODUCT) {
+                                  if (hasPickedSingleCode.compareAndSet(false, true)) {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    if (!currentIsMuted) soundPlayer.playBeep()
+                                    currentOnBarcodeDetected(confirmed)
+                                  }
+                                } else {
                                   haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                   if (!currentIsMuted) soundPlayer.playBeep()
                                   currentOnBarcodeDetected(confirmed)
                                 }
-                              } else {
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                if (!currentIsMuted) soundPlayer.playBeep()
-                                currentOnBarcodeDetected(confirmed)
                               }
                             }
                           }
-                        }
-                        .addOnCompleteListener { imageProxy.close() }
-                    } else {
-                      imageProxy.close()
+                          .addOnCompleteListener { imageProxy.close() }
+                      } else {
+                        imageProxy.close()
+                      }
                     }
                   }
-                }
 
-            try {
-              if (isDisposed.get()) return@addListener
-              cameraProviderRef = cameraProvider
-              cameraProvider.unbindAll()
-              val camera =
-                cameraProvider.bindToLifecycle(
-                  lifecycleOwner,
-                  CameraSelector.DEFAULT_BACK_CAMERA,
-                  preview,
-                  analysis,
-                )
-              boundCamera = camera
-              previewView.post {
-                val centerPoint =
-                  previewView.meteringPointFactory.createPoint(
-                    previewView.width / 2f,
-                    previewView.height / 2f,
+              try {
+                if (isDisposed.get()) return@addListener
+                cameraProviderRef = cameraProvider
+                cameraProvider.unbindAll()
+                val camera =
+                  cameraProvider.bindToLifecycle(
+                    lifecycleOwner,
+                    CameraSelector.DEFAULT_BACK_CAMERA,
+                    preview,
+                    analysis,
                   )
-                val focusAction =
-                  FocusMeteringAction.Builder(centerPoint, FocusMeteringAction.FLAG_AF)
-                    .setAutoCancelDuration(4, TimeUnit.SECONDS)
-                    .build()
-                camera.cameraControl.startFocusAndMetering(focusAction)
+                boundCamera = camera
+                previewView.post {
+                  val centerPoint =
+                    previewView.meteringPointFactory.createPoint(
+                      previewView.width / 2f,
+                      previewView.height / 2f,
+                    )
+                  val focusAction =
+                    FocusMeteringAction.Builder(centerPoint, FocusMeteringAction.FLAG_AF)
+                      .setAutoCancelDuration(4, TimeUnit.SECONDS)
+                      .build()
+                  camera.cameraControl.startFocusAndMetering(focusAction)
+                }
+              } catch (_: Exception) {
+                // Camera unavailable on device/emulator
               }
-            } catch (_: Exception) {
-              // Camera unavailable on device/emulator
-            }
-          },
-          ContextCompat.getMainExecutor(viewContext),
+            },
+            ContextCompat.getMainExecutor(viewContext),
+          )
+          previewView
+        },
+      )
+
+      // Viewfinder cutout scaled cleanly to the camera viewport
+      Canvas(modifier = Modifier.fillMaxSize()) {
+        drawRect(color = Color.Black.copy(alpha = 0.42f))
+        val boxWidth = min(size.width * 0.78f, size.height * 1.45f)
+        val boxHeight =
+          if (isCheckoutSplit) (size.height * 0.44f).coerceIn(96.dp.toPx(), boxWidth * 0.56f)
+          else boxWidth * 0.56f
+        val left = (size.width - boxWidth) / 2f
+        val top =
+          if (isCheckoutSplit) ((size.height - boxHeight) / 2f + 22.dp.toPx()).coerceAtLeast(64.dp.toPx())
+          else (size.height - boxHeight) / 2f - 40.dp.toPx()
+
+        drawRoundRect(
+          color = Color.Transparent,
+          topLeft = Offset(left, top),
+          size = Size(boxWidth, boxHeight),
+          cornerRadius = CornerRadius(16.dp.toPx(), 16.dp.toPx()),
+          blendMode = BlendMode.Clear,
         )
-        previewView
-      },
-    )
 
-    // Semi-transparent viewfinder cutout overlay
-    Canvas(modifier = Modifier.fillMaxSize()) {
-      drawRect(color = Color.Black.copy(alpha = 0.48f))
-      val boxWidth = size.width * 0.78f
-      val boxHeight = boxWidth * 0.56f
-      val left = (size.width - boxWidth) / 2f
-      val top = (size.height - boxHeight) / 2f - 40.dp.toPx()
+        drawRoundRect(
+          color = Color(0xFFFAF9F6),
+          topLeft = Offset(left, top),
+          size = Size(boxWidth, boxHeight),
+          cornerRadius = CornerRadius(16.dp.toPx(), 16.dp.toPx()),
+          style = Stroke(width = 2.5.dp.toPx()),
+        )
+      }
 
-      drawRoundRect(
-        color = Color.Transparent,
-        topLeft = Offset(left, top),
-        size = Size(boxWidth, boxHeight),
-        cornerRadius = CornerRadius(18.dp.toPx(), 18.dp.toPx()),
-        blendMode = BlendMode.Clear,
-      )
-
-      drawRoundRect(
-        color = Color(0xFFFAF9F6),
-        topLeft = Offset(left, top),
-        size = Size(boxWidth, boxHeight),
-        cornerRadius = CornerRadius(18.dp.toPx(), 18.dp.toPx()),
-        style = Stroke(width = 3.dp.toPx()),
-      )
-    }
-
-    // Top controls
-    Row(
-      modifier =
-        Modifier.fillMaxWidth()
-          .statusBarsPadding()
-          .padding(horizontal = 16.dp, vertical = 12.dp),
-      horizontalArrangement = Arrangement.SpaceBetween,
-      verticalAlignment = Alignment.CenterVertically,
-    ) {
-      IconButton(
-        onClick = onClose,
+      // Top controls
+      Row(
         modifier =
-          Modifier.size(48.dp)
-            .background(Color.Black.copy(alpha = 0.5f), CircleShape)
-            .testTag("scanner_close_button"),
+          Modifier.fillMaxWidth()
+            .statusBarsPadding()
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
       ) {
-        Icon(
-          imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-          contentDescription = "Tutup pemindai",
-          tint = Color.White,
-        )
-      }
-
-      Surface(
-        shape = RoundedCornerShape(24.dp),
-        color = Color.Black.copy(alpha = 0.55f),
-      ) {
-        Row(
-          modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(8.dp),
+        IconButton(
+          onClick = onClose,
+          modifier =
+            Modifier.size(48.dp)
+              .background(Color.Black.copy(alpha = 0.55f), CircleShape)
+              .testTag("scanner_close_button"),
         ) {
           Icon(
-            imageVector = Icons.Filled.QrCodeScanner,
-            contentDescription = null,
+            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+            contentDescription = "Tutup pemindai",
             tint = Color.White,
-            modifier = Modifier.size(18.dp),
-          )
-          Text(
-            text =
-              if (scannerMode == ScannerMode.PICK_FOR_PRODUCT) "Scan Kode Batang"
-              else "Scan untuk Kasir",
-            style = MaterialTheme.typography.labelLarge,
-            color = Color.White,
-          )
-        }
-      }
-
-      Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        IconButton(
-          onClick = onToggleSoundMute,
-          modifier =
-            Modifier.size(48.dp)
-              .background(Color.Black.copy(alpha = 0.5f), CircleShape)
-              .testTag("scanner_mute_button"),
-        ) {
-          Icon(
-            imageVector =
-              if (isSoundMuted) Icons.AutoMirrored.Filled.VolumeOff
-              else Icons.AutoMirrored.Filled.VolumeUp,
-            contentDescription =
-              if (isSoundMuted) "Nyalakan suara scan" else "Matikan suara scan",
-            tint = if (isSoundMuted) Color(0xFFB8C0B9) else Color.White,
           )
         }
 
-        IconButton(
-          onClick = { torchEnabled = !torchEnabled },
-          modifier =
-            Modifier.size(48.dp)
-              .background(Color.Black.copy(alpha = 0.5f), CircleShape)
-              .testTag("scanner_torch_button"),
+        Surface(
+          shape = RoundedCornerShape(24.dp),
+          color = Color.Black.copy(alpha = 0.55f),
         ) {
-          Icon(
-            imageVector = if (torchEnabled) Icons.Filled.FlashOn else Icons.Filled.FlashOff,
-            contentDescription = "Lampu kilat",
-            tint = if (torchEnabled) Color(0xFFFFD54F) else Color.White,
-          )
-        }
-      }
-    }
-
-    // Scan feedback pill (Checkout mode)
-    AnimatedVisibility(
-      visible = scanBannerMessage != null && scannerMode == ScannerMode.CHECKOUT,
-      enter = fadeIn(),
-      exit = fadeOut(),
-      modifier = Modifier.align(Alignment.Center).padding(top = 150.dp),
-    ) {
-      Surface(
-        shape = RoundedCornerShape(24.dp),
-        color = MaterialTheme.colorScheme.primary,
-        shadowElevation = 6.dp,
-      ) {
-        Row(
-          modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-          Icon(
-            imageVector = Icons.Filled.CheckCircle,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onPrimary,
-            modifier = Modifier.size(20.dp),
-          )
-          Text(
-            text = scanBannerMessage.orEmpty(),
-            color = MaterialTheme.colorScheme.onPrimary,
-            style = MaterialTheme.typography.labelLarge,
-          )
-        }
-      }
-    }
-
-    // Bottom bar tailored to ScannerMode
-    Surface(
-      modifier =
-        Modifier.align(Alignment.BottomCenter)
-          .fillMaxWidth()
-          .navigationBarsPadding()
-          .padding(16.dp),
-      shape = MaterialTheme.shapes.large,
-      color = MaterialTheme.colorScheme.surface,
-      shadowElevation = 8.dp,
-    ) {
-      if (scannerMode == ScannerMode.PICK_FOR_PRODUCT) {
-        Row(
-          modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-          Text(
-            text = "Arahkan kode batang ke kotak tengah (ketuk layar untuk fokus).",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.weight(1f).padding(end = 12.dp),
-          )
-          OutlinedButton(
-            onClick = onClose,
-            modifier = Modifier.height(48.dp).testTag("scanner_cancel_pick_button"),
-            shape = MaterialTheme.shapes.small,
+          Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
           ) {
-            Text("Batal")
-          }
-        }
-      } else {
-        Row(
-          modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-          Column {
+            Icon(
+              imageVector = Icons.Filled.QrCodeScanner,
+              contentDescription = null,
+              tint = Color.White,
+              modifier = Modifier.size(16.dp),
+            )
             Text(
               text =
-                if (totalItems == 0) "Scan barang untuk masuk keranjang"
-                else "$totalItems barang di keranjang",
-              style = MaterialTheme.typography.bodySmall,
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
+                if (scannerMode == ScannerMode.PICK_FOR_PRODUCT) "Scan Kode Batang"
+                else "Scan untuk Kasir",
+              style = MaterialTheme.typography.labelLarge,
+              color = Color.White,
             )
-            Text(
-              text = formatRupiah(totalAmount),
-              style = PriceTextMedium,
-              color = MaterialTheme.colorScheme.onSurface,
-              fontWeight = FontWeight.Bold,
+          }
+        }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          IconButton(
+            onClick = onToggleSoundMute,
+            modifier =
+              Modifier.size(48.dp)
+                .background(Color.Black.copy(alpha = 0.55f), CircleShape)
+                .testTag("scanner_mute_button"),
+          ) {
+            Icon(
+              imageVector =
+                if (isSoundMuted) Icons.AutoMirrored.Filled.VolumeOff
+                else Icons.AutoMirrored.Filled.VolumeUp,
+              contentDescription =
+                if (isSoundMuted) "Nyalakan suara scan" else "Matikan suara scan",
+              tint = if (isSoundMuted) Color(0xFFB8C0B9) else Color.White,
             )
           }
 
-          Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          IconButton(
+            onClick = { torchEnabled = !torchEnabled },
+            modifier =
+              Modifier.size(48.dp)
+                .background(Color.Black.copy(alpha = 0.55f), CircleShape)
+                .testTag("scanner_torch_button"),
+          ) {
+            Icon(
+              imageVector = if (torchEnabled) Icons.Filled.FlashOn else Icons.Filled.FlashOff,
+              contentDescription = "Lampu kilat",
+              tint = if (torchEnabled) Color(0xFFFFD54F) else Color.White,
+            )
+          }
+        }
+      }
+
+      // Scan feedback pill anchored near bottom of camera pane
+      androidx.compose.animation.AnimatedVisibility(
+        visible = scanBannerMessage != null && isCheckoutSplit,
+        enter = fadeIn(),
+        exit = fadeOut(),
+        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),
+      ) {
+        Surface(
+          shape = RoundedCornerShape(24.dp),
+          color = MaterialTheme.colorScheme.primary,
+          shadowElevation = 6.dp,
+        ) {
+          Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+          ) {
+            Icon(
+              imageVector = Icons.Filled.CheckCircle,
+              contentDescription = null,
+              tint = MaterialTheme.colorScheme.onPrimary,
+              modifier = Modifier.size(18.dp),
+            )
+            Text(
+              text = scanBannerMessage.orEmpty(),
+              color = MaterialTheme.colorScheme.onPrimary,
+              style = MaterialTheme.typography.labelLarge,
+            )
+          }
+        }
+      }
+
+      // Bottom card overlay when picking barcode for a single product
+      if (!isCheckoutSplit) {
+        Surface(
+          modifier =
+            Modifier.align(Alignment.BottomCenter)
+              .fillMaxWidth()
+              .navigationBarsPadding()
+              .padding(16.dp),
+          shape = MaterialTheme.shapes.large,
+          color = MaterialTheme.colorScheme.surface,
+          shadowElevation = 8.dp,
+        ) {
+          Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+          ) {
+            Text(
+              text = "Arahkan kode batang ke kotak tengah (ketuk layar untuk fokus).",
+              style = MaterialTheme.typography.bodySmall,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+              modifier = Modifier.weight(1f).padding(end = 12.dp),
+            )
             OutlinedButton(
               onClick = onClose,
-              modifier = Modifier.height(48.dp).testTag("scanner_done_button"),
+              modifier = Modifier.height(48.dp).testTag("scanner_cancel_pick_button"),
               shape = MaterialTheme.shapes.small,
             ) {
-              Text("Selesai")
+              Text("Batal")
             }
-            if (totalItems > 0) {
-              Button(
-                onClick = {
-                  onClose()
-                  onOpenPayment()
-                },
-                modifier = Modifier.height(48.dp).testTag("scanner_pay_button"),
-                shape = MaterialTheme.shapes.small,
-                colors =
-                  ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary
-                  ),
+          }
+        }
+      }
+    }
+
+    // Bottom Full Shopping List Pane (58% height in Checkout Split mode)
+    if (isCheckoutSplit) {
+      Surface(
+        modifier = Modifier.fillMaxWidth().weight(0.58f),
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+        color = MaterialTheme.colorScheme.background,
+      ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+          // List header
+          Column(
+            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp, top = 14.dp, bottom = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+          ) {
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.SpaceBetween,
+              verticalAlignment = Alignment.CenterVertically,
+            ) {
+              Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
               ) {
-                Text("Bayar")
+                Text(
+                  text = "List Belanjaan",
+                  style = MaterialTheme.typography.titleLarge,
+                  fontWeight = FontWeight.Bold,
+                  color = MaterialTheme.colorScheme.onBackground,
+                )
+                Surface(
+                  shape = RoundedCornerShape(10.dp),
+                  color =
+                    if (totalItems > 0) MaterialTheme.colorScheme.secondary
+                    else MaterialTheme.colorScheme.surfaceVariant,
+                ) {
+                  Text(
+                    text = "$totalItems item",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color =
+                      if (totalItems > 0) MaterialTheme.colorScheme.onSecondary
+                      else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                  )
+                }
+              }
+
+              if (cartItems.isNotEmpty()) {
+                TextButton(
+                  onClick = onClearCart,
+                  modifier = Modifier.height(44.dp).testTag("scanner_clear_cart_button"),
+                ) {
+                  Icon(
+                    imageVector = Icons.Filled.DeleteSweep,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(18.dp),
+                  )
+                  Spacer(modifier = Modifier.width(4.dp))
+                  Text("Kosongkan", color = MaterialTheme.colorScheme.error)
+                }
               }
             }
+
+            if (cartItems.isNotEmpty()) {
+              Text(
+                text = "Ketuk kiri (−) kurangi  •  Ketuk kanan (+) tambah",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+              )
+            }
+          }
+
+          // Scrollable shopping list
+          if (cartItems.isEmpty()) {
+            Box(
+              modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 24.dp),
+              contentAlignment = Alignment.Center,
+            ) {
+              Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+              ) {
+                Surface(
+                  shape = CircleShape,
+                  color = MaterialTheme.colorScheme.surfaceVariant,
+                  modifier = Modifier.size(56.dp),
+                ) {
+                  Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                      imageVector = Icons.Outlined.ShoppingBasket,
+                      contentDescription = null,
+                      tint = MaterialTheme.colorScheme.primary,
+                      modifier = Modifier.size(28.dp),
+                    )
+                  }
+                }
+                Text(
+                  text = "Keranjang masih kosong",
+                  style = MaterialTheme.typography.titleMedium,
+                  color = MaterialTheme.colorScheme.onBackground,
+                  textAlign = TextAlign.Center,
+                )
+                Text(
+                  text = "Arahkan kamera di atas ke barcode barang untuk langsung masuk daftar belanjaan.",
+                  style = MaterialTheme.typography.bodySmall,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                  textAlign = TextAlign.Center,
+                )
+              }
+            }
+          } else {
+            LazyColumn(
+              modifier = Modifier.weight(1f).fillMaxWidth(),
+              contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+              verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+              items(cartItems, key = { it.product.id }) { item ->
+                ScannerSplitCartItemCard(
+                  item = item,
+                  onDecrement = {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onDecrementItem(item.product.id)
+                  },
+                  onIncrement = {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onIncrementItem(item)
+                  },
+                )
+              }
+            }
+          }
+
+          // Pinned footer with total and Selesai / Bayar actions
+          Surface(
+            color = MaterialTheme.colorScheme.surface,
+            modifier = Modifier.fillMaxWidth(),
+          ) {
+            Column {
+              HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+              Row(
+                modifier =
+                  Modifier.fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+              ) {
+                Column(modifier = Modifier.weight(1f).padding(end = 10.dp)) {
+                  Text(
+                    text = "Total Belanja",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                  )
+                  Text(
+                    text = formatRupiah(totalAmount),
+                    style = PriceTextLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                  )
+                }
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                  OutlinedButton(
+                    onClick = onClose,
+                    modifier = Modifier.height(48.dp).testTag("scanner_done_button"),
+                    shape = MaterialTheme.shapes.small,
+                  ) {
+                    Text("Selesai")
+                  }
+
+                  Button(
+                    onClick = {
+                      onClose()
+                      onOpenPayment()
+                    },
+                    enabled = totalItems > 0,
+                    modifier = Modifier.height(48.dp).testTag("scanner_pay_button"),
+                    shape = MaterialTheme.shapes.small,
+                  ) {
+                    Text("Bayar")
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Icon(
+                      imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                      contentDescription = null,
+                      modifier = Modifier.size(16.dp),
+                    )
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun ScannerSplitCartItemCard(
+  item: CartLineItem,
+  onDecrement: () -> Unit,
+  onIncrement: () -> Unit,
+) {
+  val cardShape = RoundedCornerShape(16.dp)
+  Surface(
+    shape = cardShape,
+    color = MaterialTheme.colorScheme.surface,
+    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+    modifier = Modifier.fillMaxWidth().clip(cardShape),
+  ) {
+    Box(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
+      Row(modifier = Modifier.matchParentSize()) {
+        Box(
+          modifier =
+            Modifier.weight(1f)
+              .fillMaxHeight()
+              .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f))
+              .clickable(
+                role = Role.Button,
+                onClickLabel = "Kurangi ${item.product.name}",
+                onClick = onDecrement,
+              )
+              .semantics { contentDescription = "Kurangi ${item.product.name}" }
+              .testTag("scanner_cart_minus_${item.product.id}")
+        )
+        Box(
+          modifier =
+            Modifier.weight(1f)
+              .fillMaxHeight()
+              .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.24f))
+              .clickable(
+                role = Role.Button,
+                onClickLabel = "Tambah ${item.product.name}",
+                onClick = onIncrement,
+              )
+              .semantics { contentDescription = "Tambah ${item.product.name}" }
+              .testTag("scanner_cart_plus_${item.product.id}")
+        )
+      }
+
+      Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+      ) {
+        Surface(
+          shape = RoundedCornerShape(10.dp),
+          color = MaterialTheme.colorScheme.surfaceVariant,
+          modifier = Modifier.size(34.dp),
+        ) {
+          Box(contentAlignment = Alignment.Center) {
+            Icon(
+              imageVector = Icons.Filled.Remove,
+              contentDescription = null,
+              tint = MaterialTheme.colorScheme.onSurfaceVariant,
+              modifier = Modifier.size(18.dp),
+            )
+          }
+        }
+
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+          Text(
+            text = item.product.name,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+          Text(
+            text = "${formatRupiah(item.product.price)} / ${item.product.unit}",
+            style = PriceTextSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+        }
+
+        Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+          Surface(
+            shape = RoundedCornerShape(8.dp),
+            color = MaterialTheme.colorScheme.secondary,
+          ) {
+            Text(
+              text = "×${item.quantity}",
+              style = MaterialTheme.typography.labelMedium,
+              fontWeight = FontWeight.Bold,
+              color = MaterialTheme.colorScheme.onSecondary,
+              modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+            )
+          }
+          Text(
+            text = formatRupiah(item.subtotal),
+            style = PriceTextMedium,
+            color = MaterialTheme.colorScheme.primary,
+          )
+        }
+
+        Surface(
+          shape = RoundedCornerShape(10.dp),
+          color = MaterialTheme.colorScheme.primaryContainer,
+          modifier = Modifier.size(34.dp),
+        ) {
+          Box(contentAlignment = Alignment.Center) {
+            Icon(
+              imageVector = Icons.Filled.Add,
+              contentDescription = null,
+              tint = MaterialTheme.colorScheme.onPrimaryContainer,
+              modifier = Modifier.size(18.dp),
+            )
           }
         }
       }
@@ -688,7 +1004,7 @@ private fun selectCenterBarcode(
       val notClipped = box.left > frameWidth * 0.03f && box.right < frameWidth * 0.97f
       val inAimArea =
         bx in (frameWidth * 0.12f)..(frameWidth * 0.88f) &&
-          by in (frameHeight * 0.18f)..(frameHeight * 0.82f)
+          by in (frameHeight * 0.20f)..(frameHeight * 0.80f)
       notClipped && inAimArea
     }
 

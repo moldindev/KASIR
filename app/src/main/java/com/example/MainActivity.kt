@@ -198,11 +198,15 @@ private fun KasirSembakoApp(
     if (cashierState.isScannerOpen) {
       BarcodeScannerOverlay(
         scannerMode = cashierState.scannerMode,
+        cartItems = cashierState.cartItems,
         totalItems = cashierState.totalItems,
         totalAmount = cashierState.totalAmount,
         scanBannerMessage = cashierState.scanBannerMessage,
         isSoundMuted = cashierState.isSoundMuted,
         onToggleSoundMute = cashierViewModel::toggleSoundMute,
+        onIncrementItem = { item -> cashierViewModel.addToCart(item.product) },
+        onDecrementItem = cashierViewModel::decrementFromCart,
+        onClearCart = cashierViewModel::clearCart,
         onBarcodeDetected = cashierViewModel::onBarcodeScanned,
         onClearBanner = cashierViewModel::clearScanBanner,
         onOpenPayment = cashierViewModel::openPaymentSheet,
